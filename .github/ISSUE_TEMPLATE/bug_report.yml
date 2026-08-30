@@ -1,0 +1,36 @@
+name: Bug report
+description: Something in the MCP server behaves incorrectly.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For questions about redaction quality, billing, or your account, email
+        info@redact-pdf.ai instead — this tracker covers the MCP server only.
+  - type: input
+    id: version
+    attributes:
+      label: Package version
+      placeholder: redact-pdf-mcp@0.1.0
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      placeholder: Claude Code 2.x / Claude Desktop / Cursor
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Include the tool you called and the error text. Redact any API key first.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true

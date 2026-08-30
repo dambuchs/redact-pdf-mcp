@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Redaction quality, billing, or account questions
+    url: https://www.redact-pdf.ai/developers
+    about: "Anything about the Redact PDF AI service itself rather than this MCP server. Email info@redact-pdf.ai for account help."
+  - name: API documentation
+    url: https://www.redact-pdf.ai/docs
+    about: Endpoint reference, error codes, and quickstarts for the underlying REST API.

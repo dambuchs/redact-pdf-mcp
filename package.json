@@ -1,0 +1,69 @@
+{
+  "name": "redact-pdf-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Redact PDF AI — permanently redact PII from PDFs. Give an agent a PDF, get back a redacted PDF with the sensitive text removed, not just covered.",
+  "keywords": [
+    "mcp",
+    "modelcontextprotocol",
+    "model-context-protocol",
+    "pdf",
+    "redaction",
+    "redact",
+    "pii",
+    "gdpr",
+    "hipaa",
+    "anonymization",
+    "ocr",
+    "claude",
+    "ai-agent"
+  ],
+  "homepage": "https://www.redact-pdf.ai/developers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dambuchs/redact-pdf-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dambuchs/redact-pdf-mcp/issues"
+  },
+  "license": "MIT",
+  "author": "Redact PDF AI",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "redact-pdf-mcp": "dist/stdio.js",
+    "redact-pdf-mcp-http": "dist/http.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "check-types": "tsc --noEmit",
+    "test": "vitest run --exclude '**/*.integration.test.ts'",
+    "test:integration": "vitest run test/demo.integration.test.ts",
+    "test:all": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.11"
+  }
+}
