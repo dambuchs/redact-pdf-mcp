@@ -7,6 +7,12 @@ that anyone can select, copy, or delete.
 Most "redaction" MCP servers scrub PII out of prompt text. This one takes a real document
 and returns a real redacted document.
 
+[![npm](https://img.shields.io/npm/v/redact-pdf-mcp?color=cb3837&logo=npm)](https://www.npmjs.com/package/redact-pdf-mcp)
+[![MCP registry](https://img.shields.io/badge/MCP%20registry-io.github.dambuchs%2Fredact--pdf--mcp-blue)](https://registry.modelcontextprotocol.io)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+
+<a href="https://glama.ai/mcp/servers/dambuchs/redact-pdf-mcp"><img width="380" height="200" src="https://glama.ai/mcp/servers/dambuchs/redact-pdf-mcp/badges/card.svg" alt="redact-pdf-mcp MCP server" /></a>
+
 ```bash
 claude mcp add redact-pdf -- npx -y redact-pdf-mcp
 ```
