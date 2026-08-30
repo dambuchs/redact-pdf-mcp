@@ -1,7 +1,8 @@
 {
   "name": "redact-pdf-mcp",
   "version": "0.1.0",
-  "description": "MCP server for Redact PDF AI — permanently redact PII from PDFs. Give an agent a PDF, get back a redacted PDF with the sensitive text removed, not just covered.",
+  "description": "MCP server for Redact PDF AI \u2014 permanently redact PII from PDFs. Give an agent a PDF, get back a redacted PDF with the sensitive text removed, not just covered.",
+  "mcpName": "io.github.dambuchs/redact-pdf-mcp",
   "keywords": [
     "mcp",
     "modelcontextprotocol",
