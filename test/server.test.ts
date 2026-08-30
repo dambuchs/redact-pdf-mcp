@@ -11,7 +11,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { callAt, fetchMock, jsonResponse, payload } from './helpers.js';
-import { RedactPdfClient } from '../src/client.js';
+import { METADATA_TIMEOUT_MS, RedactPdfClient } from '../src/client.js';
 import { createServer, defaultOutputPath, type ServerMode } from '../src/server.js';
 import type { Job } from '../src/types.js';
 
@@ -143,6 +143,21 @@ describe('tool listing', () => {
     expect(primary?.annotations?.destructiveHint).toBe(true);
   });
 
+  it('tells the model that images are accepted, not just PDFs', async () => {
+    // Observed in real use: an agent converted a screenshot to PDF before
+    // calling this server, because the tool name and headline both say "PDF".
+    // Image support existed the whole time; it just was not where the model
+    // looks. If these assertions fail, that regression is back.
+    const { client } = await connect('stdio', fetchMock() as unknown as typeof fetch);
+    const { tools } = await client.listTools();
+
+    for (const name of ['redact_pdf_and_wait', 'redact_pdf']) {
+      const description = tools.find((t) => t.name === name)?.description ?? '';
+      expect(description, `${name} must name the accepted formats`).toMatch(/JPEG and PNG/i);
+      expect(description, `${name} must discourage pre-converting`).toMatch(/do NOT convert/i);
+    }
+  });
+
   it('describes the tools in terms of what redaction actually is', async () => {
     const { client } = await connect('stdio', fetchMock() as unknown as typeof fetch);
     const { tools } = await client.listTools();
@@ -173,6 +188,40 @@ describe('redact_pdf_and_wait (stdio)', () => {
 
     const written = await readFile(out.output_path as string);
     expect(new Uint8Array(written)).toEqual(REDACTED_PDF);
+  });
+
+  it('bounds every status read by the metadata timeout as well as the budget', async () => {
+    // Two regressions have lived in this one call site, and neither is visible
+    // in tool output. Letting the client's own 3 attempts nest inside the loop
+    // that IS the retry produced ~38x the request volume and ran a 10s budget
+    // for 95s. Passing only the remaining budget then let ONE read own the
+    // entire wait: with the 300s default the first poll issued a single ~298s
+    // request, so an upstream that accepts the connection and then hangs was
+    // never retried at all. Assert the wiring, since nothing else can.
+    const seen: Array<{ maxAttempts?: number; timeoutMs?: number }> = [];
+    vi.spyOn(RedactPdfClient.prototype, 'getJob').mockImplementation(async (_id, options = {}) => {
+      seen.push(options);
+      return job();
+    });
+
+    const fetchImpl = fetchMock()
+      .mockResolvedValueOnce(jsonResponse(job({ status: 'analyzing' }))) // POST /v1/jobs
+      .mockResolvedValueOnce(new Response(REDACTED_PDF)); // GET output
+
+    const { client } = await connect('stdio', fetchImpl as unknown as typeof fetch);
+    // No timeout_seconds: exercise the full 300s default, where the unclamped
+    // read timeout was at its worst.
+    await client.callTool({
+      name: 'redact_pdf_and_wait',
+      arguments: { file_path: inputPath },
+    });
+
+    expect(seen.length).toBeGreaterThan(0);
+    for (const options of seen) {
+      expect(options.maxAttempts).toBe(1);
+      expect(options.timeoutMs).toBeLessThanOrEqual(METADATA_TIMEOUT_MS);
+      expect(options.timeoutMs).toBeGreaterThanOrEqual(1_000);
+    }
   });
 
   it('leaves the original file untouched', async () => {

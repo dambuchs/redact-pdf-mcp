@@ -389,3 +389,48 @@ describe('upload path selection', () => {
     expect(callAt(fetchImpl, 3)[0]).toBe('https://www.redact-pdf.ai/v1/jobs/job-9/commit');
   });
 });
+
+describe('reading a response body', () => {
+  // request() wraps only the fetch call, so everything that fails after the
+  // headers arrive lands outside it: a reset mid-stream is a bare
+  // TypeError('terminated'), a proxy answering 200 with an HTML error page is a
+  // SyntaxError. The poll loop treats anything that is not a RedactPdfError as
+  // non-retryable, so an unwrapped blip on a status read ended a five-minute
+  // wait seconds into it — on exactly the fault the loop exists to ride out.
+  it('classifies a truncated status body as retryable rather than fatal', async () => {
+    const fetchImpl = fetchMock(
+      async () =>
+        new Response('{"job_id": "jo', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    );
+    const client = new RedactPdfClient({
+      apiKey: 'k',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleep: noSleep,
+    });
+
+    const error = await rejection(client.getJob('job-1'));
+
+    expect(error).toBeInstanceOf(RedactPdfError);
+    expect(error.code).toBe('network_error');
+    expect(error.retryable).toBe(true);
+  });
+
+  it('classifies an HTML error page served as 200 the same way', async () => {
+    const fetchImpl = fetchMock(
+      async () => new Response('<html>502 Bad Gateway</html>', { status: 200 }),
+    );
+    const client = new RedactPdfClient({
+      apiKey: 'k',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleep: noSleep,
+    });
+
+    const error = await rejection(client.getJob('job-1'));
+
+    expect(error.code).toBe('network_error');
+    expect(error.retryable).toBe(true);
+  });
+});

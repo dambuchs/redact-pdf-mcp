@@ -31,17 +31,32 @@ export const DEFAULT_POLL_OPTIONS: Required<Omit<PollOptions, 'sleep' | 'now'>> 
 };
 
 /**
+ * Never poll faster than this while budget remains.
+ *
+ * `initialDelayMs: 0` — reachable through the `pollOptions` the server docs
+ * invite operators to tune ("a deployment that knows its documents are small
+ * can poll sooner") — makes the geometric schedule collapse to zero for every
+ * attempt, spinning status reads at network speed for the whole budget.
+ */
+const MIN_POLL_DELAY_MS = 250;
+
+/**
  * The delay before poll number `attempt` (1-based), clamped so the total never
  * overshoots the deadline — the last wait lands exactly on it.
+ *
+ * `minDelayMs` carries a server-requested Retry-After, which may legitimately
+ * exceed `maxDelayMs`; it is still clamped to the remaining budget.
  */
 export function delayForAttempt(
   attempt: number,
   elapsedMs: number,
   options: Required<Omit<PollOptions, 'sleep' | 'now'>>,
+  minDelayMs = 0,
 ): number {
-  const raw = options.initialDelayMs * options.factor ** (attempt - 1);
-  const capped = Math.min(raw, options.maxDelayMs);
   const remaining = options.timeoutMs - elapsedMs;
+  if (remaining <= 0) return 0;
+  const raw = options.initialDelayMs * options.factor ** (attempt - 1);
+  const capped = Math.max(Math.min(raw, options.maxDelayMs), minDelayMs, MIN_POLL_DELAY_MS);
   return Math.max(0, Math.min(capped, remaining));
 }
 
@@ -76,13 +91,15 @@ export async function pollUntilTerminal(
   let attempt = 0;
   let lastJob: Job | undefined;
   let lastError: RedactPdfError | undefined;
+  let retryAfterMs = 0;
 
   for (;;) {
     attempt += 1;
     const elapsed = now() - startedAt;
     if (elapsed >= config.timeoutMs) break;
 
-    await sleep(delayForAttempt(attempt, elapsed, config));
+    await sleep(delayForAttempt(attempt, elapsed, config, retryAfterMs));
+    retryAfterMs = 0;
 
     try {
       lastJob = await fetchJob(jobId, Math.max(0, config.timeoutMs - (now() - startedAt)));
@@ -96,6 +113,11 @@ export async function pollUntilTerminal(
       const failure = asRedactPdfError(error);
       if (!failure.retryable) throw failure.withJob(jobId);
       lastError = failure;
+      // Honour a Retry-After. The API's limiter uses a FIXED window, so polling
+      // again before it rolls over is guaranteed to 429 again — the same futile
+      // load the client refuses to generate one layer down, re-created here by
+      // ignoring the header and falling back to the 2-15s schedule.
+      retryAfterMs = (failure.retryAfterSeconds ?? 0) * 1000;
     }
 
     if (lastJob && isTerminal(lastJob)) return lastJob;
@@ -114,7 +136,7 @@ export async function pollUntilTerminal(
       ? ` The last status read that succeeded reported "${lastJob.status}", but every attempt since then failed, so that may be far out of date.`
       : '';
     throw new RedactPdfError(
-      `Could not read the status of job ${jobId} within ${budgetSeconds}s: ${lastError.message}${staleness} The job was created and may still be running — call get_job_status with job_id "${jobId}" before redacting this document again, or you will pay for it twice.`,
+      `Could not read the status of job ${jobId} within ${budgetSeconds}s: ${lastError.message}${staleness} The job was created and may still be running — call get_job_status with job_id "${jobId}" before redacting this document again, or you may pay for it twice.`,
       { code: lastError.code, retryable: false, jobId },
     );
   }

@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { RedactPdfClient, withoutEmptyRules } from './client.js';
+import { METADATA_TIMEOUT_MS, RedactPdfClient, withoutEmptyRules } from './client.js';
 import { ACCOUNT_STATUS, DOWNLOAD, JOB_STATUS, PARAM, REDACT_ASYNC, REDACT_AND_WAIT, TRY_DEMO } from './descriptions.js';
 import { RedactPdfError } from './errors.js';
 import { logToolCall } from './observability.js';
@@ -262,12 +262,23 @@ async function writeOutput(outputPath: string, bytes: Uint8Array): Promise<void>
   // THROUGH the hardlink and rewrote a file the first call had already reported
   // as finished — one document's bytes inside another document's output. A
   // random component plus O_EXCL makes sharing a temp file impossible.
-  const temp = `${outputPath}.${randomUUID()}.partial`;
+  //
+  // Kept short and in the destination's own directory (all link() needs) rather
+  // than appended to outputPath: a 45-character suffix on an already-long
+  // basename overflows the 255-byte limit, failing the temp create for a final
+  // path that is itself perfectly legal.
+  const temp = join(dirname(outputPath), `.redact-${randomUUID()}.partial`);
   try {
     // 'wx' fails rather than truncating if the name somehow already exists.
     await writeFile(temp, bytes, { flag: 'wx' });
   } catch (cause) {
-    await unlink(temp).catch(() => undefined);
+    // 'wx' failing with EEXIST proves we did NOT create this file, so deleting
+    // it would destroy whatever does own the name — a concurrent call's
+    // in-flight temp. Sharing a temp file is how round 3 spliced one document's
+    // bytes into another's output; do not also make it deletable.
+    if ((cause as NodeJS.ErrnoException)?.code !== 'EEXIST') {
+      await unlink(temp).catch(() => undefined);
+    }
     throw writeFailure(outputPath, cause);
   }
 
@@ -278,36 +289,40 @@ async function writeOutput(outputPath: string, bytes: Uint8Array): Promise<void>
     // so let the filesystem decide, atomically.
     await link(temp, outputPath);
   } catch (cause) {
-    const code = (cause as NodeJS.ErrnoException)?.code;
-    if (code === 'EEXIST') {
-      throw new RedactPdfError(
-        `"${outputPath}" already exists. Refusing to overwrite it — pass a different output_path, or delete the existing file first if it is genuinely stale.`,
-        { code: 'invalid_request' },
-      );
+    if ((cause as NodeJS.ErrnoException)?.code === 'EEXIST') {
+      throw alreadyExistsError(outputPath);
     }
-    // Some filesystems (exFAT, FAT32, parts of SMB and FUSE) have no hardlinks
-    // and reject link(2) outright where rename(2) works. Fall back to an
-    // exclusive create at the destination: that keeps the no-overwrite
-    // guarantee, trading away only crash-atomicity, which those filesystems
-    // could not have given us anyway.
-    if (code === 'EPERM' || code === 'ENOTSUP' || code === 'EOPNOTSUPP' || code === 'EXDEV' || code === 'EMLINK') {
-      try {
-        await writeFile(outputPath, bytes, { flag: 'wx' });
-      } catch (fallbackCause) {
-        if ((fallbackCause as NodeJS.ErrnoException)?.code === 'EEXIST') {
-          throw new RedactPdfError(
-            `"${outputPath}" already exists. Refusing to overwrite it — pass a different output_path, or delete the existing file first if it is genuinely stale.`,
-            { code: 'invalid_request' },
-          );
-        }
-        throw writeFailure(outputPath, fallbackCause);
+    // ANY other link() failure falls back to an exclusive create at the
+    // destination. This gate used to enumerate the errnos of filesystems
+    // without hardlinks (exFAT, FAT32, parts of SMB and FUSE) — which meant
+    // guessing them per platform, and getting it wrong off POSIX: Windows maps
+    // a CreateHardLinkW failure on a non-NTFS volume to EISDIR, and some FUSE
+    // mounts answer ENOSYS, neither of which was listed. The user then got
+    // "pass an absolute output_path inside a directory this process can write
+    // to" for a directory plain writeFile handles — after the pages were
+    // already billed. Falling back on everything is safe because 'wx' keeps the
+    // no-overwrite guarantee, and a genuine fault (EACCES, ENOSPC) still fails
+    // here with the honest error it would have raised anyway. Only
+    // crash-atomicity is traded away, which these filesystems never offered.
+    try {
+      await writeFile(outputPath, bytes, { flag: 'wx' });
+    } catch (fallbackCause) {
+      if ((fallbackCause as NodeJS.ErrnoException)?.code === 'EEXIST') {
+        throw alreadyExistsError(outputPath);
       }
-      return;
+      throw writeFailure(outputPath, fallbackCause);
     }
-    throw writeFailure(outputPath, cause);
   } finally {
     await unlink(temp).catch(() => undefined);
   }
+}
+
+/** One wording for the refusal, reached from both the link and fallback paths. */
+function alreadyExistsError(outputPath: string): RedactPdfError {
+  return new RedactPdfError(
+    `"${outputPath}" already exists. Refusing to overwrite it — pass a different output_path, or delete the existing file first if it is genuinely stale.`,
+    { code: 'invalid_request' },
+  );
 }
 
 function writeFailure(outputPath: string, cause: unknown): RedactPdfError {
@@ -429,7 +444,7 @@ export function createServer(options: CreateServerOptions): McpServer {
     { name: 'redact-pdf', version: VERSION },
     {
       instructions:
-        'Redact PDF AI permanently removes PII from PDFs — the sensitive text is deleted from the file, not covered with a black box. For almost every request, call redact_pdf_and_wait once and you are done. try_demo needs no API key and is the fastest way to confirm the server is working.',
+        'Redact PDF AI permanently removes PII from documents. The sensitive text is deleted from the file, not covered with a black box. It accepts PDF, JPEG and PNG, so pass a photo or screenshot straight in rather than converting it to a PDF first; the output is a redacted PDF either way. For almost every request, call redact_pdf_and_wait once and you are done. try_demo needs no API key and is the fastest way to confirm the server is working.',
     },
   );
 
@@ -477,8 +492,19 @@ export function createServer(options: CreateServerOptions): McpServer {
           // One attempt per poll, bounded by the remaining budget: the loop is
           // the retry, so letting the client retry inside it multiplies traffic
           // and breaks the advertised timeout.
+          //
+          // Bounded by METADATA_TIMEOUT_MS as well as the budget. Passing the
+          // remaining budget alone let ONE read own the whole wait: with the
+          // 300s default, the first poll issued a single request with a ~298s
+          // deadline, so an upstream that accepts the connection and then hangs
+          // burned the entire budget on one attempt and the loop never got a
+          // second — "the loop is itself the retry" only holds if a read is
+          // short enough for a retry to fit.
           (id, remainingMs) =>
-            client.getJob(id, { maxAttempts: 1, timeoutMs: Math.max(1_000, remainingMs) }),
+            client.getJob(id, {
+              maxAttempts: 1,
+              timeoutMs: Math.min(METADATA_TIMEOUT_MS, Math.max(1_000, remainingMs)),
+            }),
           {
           ...pollOptions,
           // No local default: poll.ts owns DEFAULT_POLL_OPTIONS.timeoutMs, and a

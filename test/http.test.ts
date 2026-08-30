@@ -5,7 +5,7 @@
  */
 
 import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { connect as netConnect, type AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { apiKeyFrom, createHttpHandler, isKeylessRequest, MAX_BODY_BYTES, parseMaxInFlight, parsePositiveIntEnv, DEFAULT_MAX_IN_FLIGHT } from '../src/http.js';
 import { MAX_PDF_BYTES } from '../src/types.js';
@@ -239,5 +239,51 @@ describe('body limits', () => {
     const response = await post('{not json', { 'X-API-Key': 'k' });
     expect(response.status).toBe(400);
     expect((await readJson(response)).error?.code).toBe(-32700);
+  });
+});
+
+describe('hostile request lines', () => {
+  // The handler used to build `new URL(req.url, \`http://${req.headers.host}\`)`.
+  // The Host header is attacker-controlled, `new URL` throws on a malformed
+  // authority, and the throw is synchronous inside the request listener — where
+  // there is no try/catch and no uncaughtException handler. One unauthenticated
+  // `Host: a b` to /health, which is answered before any auth, printed a stack
+  // trace and exit(1), taking every in-flight redaction with it. Only the
+  // pathname was ever used.
+  //
+  // `fetch` will not send these, so the requests go down a raw socket. If the
+  // handler regresses, the process dies and this whole file fails — which is
+  // the signal we want.
+  const rawRequest = (raw: string): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const port = (server.address() as AddressInfo).port;
+      const socket = netConnect(port, '127.0.0.1', () => socket.write(raw));
+      let buffer = '';
+      socket.on('data', (chunk: Buffer) => {
+        buffer += chunk.toString();
+      });
+      socket.on('close', () => resolve(buffer));
+      socket.on('error', reject);
+    });
+
+  it.each([
+    ['a space', 'a b'],
+    ['an unclosed IPv6 literal', '[::1'],
+    ['an out-of-range port', 'x:99999999'],
+    ['a bare percent', '%'],
+    ['an empty value', ''],
+  ])('answers /health rather than crashing when Host contains %s', async (_label, host) => {
+    const response = await rawRequest(
+      `GET /health HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`,
+    );
+    expect(response).toMatch(/^HTTP\/1\.1 200 /);
+    expect(response).toContain('redact-pdf-mcp');
+  });
+
+  it('still routes unknown paths to 404 with a malformed Host', async () => {
+    const response = await rawRequest(
+      'GET /nope HTTP/1.1\r\nHost: a b\r\nConnection: close\r\n\r\n',
+    );
+    expect(response).toMatch(/^HTTP\/1\.1 404 /);
   });
 });

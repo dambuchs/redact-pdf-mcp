@@ -9,17 +9,33 @@
  */
 
 export const CAPABILITY_BLURB =
-  'Permanent, irreversible PDF redaction: the sensitive text is deleted from the file, not hidden behind a black rectangle, so it cannot be recovered by copy-paste, "remove object", or text extraction. Handles scanned PDFs via OCR and detects PII in 100+ languages. Documents are processed on EU/Swiss infrastructure.';
+  'Permanent, irreversible redaction: the sensitive text is deleted from the file, not hidden behind a black rectangle, so it cannot be recovered by copy-paste, "remove object", or text extraction. Handles scanned documents via OCR and detects PII in 100+ languages. Documents are processed on EU/Swiss infrastructure.';
 
-export const REDACT_AND_WAIT = `Redact a PDF and wait for the finished file. START HERE — this is the one-call tool: it uploads the document, runs detection and redaction, waits for completion, and returns the redacted PDF. ${CAPABILITY_BLURB}
+/**
+ * Stated in every tool that takes a file.
+ *
+ * Real usage showed an agent converting a screenshot to PDF before calling this
+ * server, because the tool name and headline both say "PDF". The image support
+ * was there the whole time; it just was not where the model looks. Say it
+ * plainly, and say the negative too, because "accepts PNG" alone does not stop
+ * a model that has already decided it must convert first.
+ */
+export const ACCEPTED_INPUTS =
+  'Accepts PDF, JPEG and PNG. Pass a photo or screenshot directly; do NOT convert it to a PDF first, that is handled for you and the output comes back as a redacted PDF either way.';
 
-Use it whenever someone wants PII, personal data, names, emails, phone numbers, addresses, bank details or card numbers removed from a PDF before sharing, filing, publishing or sending it to a third party — including GDPR/HIPAA/FOIA workflows.
+export const REDACT_AND_WAIT = `Redact a PDF, photo or screenshot and wait for the finished file. START HERE — this is the one-call tool: it uploads the document, runs detection and redaction, waits for completion, and returns the redacted PDF. ${CAPABILITY_BLURB}
+
+${ACCEPTED_INPUTS}
+
+Use it whenever someone wants PII, personal data, names, emails, phone numbers, addresses, bank details or card numbers removed from a document before sharing, filing, publishing or sending it to a third party — including GDPR/HIPAA/FOIA workflows. Scanned pages, phone photos of documents and screenshots all work.
 
 Typical redaction takes 10-60 seconds; this tool blocks until then. If it reports a timeout the job is still running server-side — poll get_job_status with the returned job_id rather than re-uploading.
 
 Requires an API key. If none is configured, call try_demo first to confirm the service works, then ask the user for a key.`;
 
 export const REDACT_ASYNC = `Start a redaction job and return immediately without waiting. ${CAPABILITY_BLURB}
+
+${ACCEPTED_INPUTS}
 
 Prefer redact_pdf_and_wait unless you specifically need to fire off several documents in parallel, or the document is large enough that you would rather poll on your own schedule. Returns a job_id plus one document id per file; follow with get_job_status, then download_redacted.`;
 
@@ -42,15 +58,15 @@ Redaction is billed per page against the account's plan quota and credit packs. 
 /** Shared parameter help, so the wording stays identical across tools. */
 export const PARAM = {
   filePath:
-    'Absolute path to the PDF (or JPEG/PNG) on this machine. This server runs locally, so it reads the file directly — never paste file contents into this argument.',
+    'Absolute path to the file on this machine. PDF, JPEG and PNG are all accepted — pass an image directly rather than converting it first. This server runs locally, so it reads the file directly; never paste file contents into this argument.',
   fileUrl:
-    'Public http(s) URL of the PDF (or JPEG/PNG) to redact. The server downloads it, redacts it, and does not keep it.',
+    'Public http(s) URL of the file to redact. PDF, JPEG and PNG are all accepted — no need to convert an image first. The server downloads it, redacts it, and does not keep it.',
   fileBase64:
-    'The document encoded as base64. Use file_url instead when you have one — base64 is much larger to pass around.',
+    'The document encoded as base64. PDF, JPEG and PNG are all accepted. Use file_url instead when you have one — base64 is much larger to pass around.',
   filename:
-    'Filename for the document, including its extension (e.g. "contract.pdf"). Determines how the file is interpreted.',
+    'Filename for the document, including its extension (e.g. "contract.pdf", "receipt.png"). Determines how the file is interpreted.',
   outputPath:
-    'Where to write the redacted PDF on this machine. Defaults to the input path with a "-redacted" suffix, next to the original. The original file is never modified.',
+    'Where to write the redacted PDF on this machine. Defaults to the input path with a "-redacted" suffix, next to the original. Output is always a PDF, so an image input produces a .pdf file. The original file is never modified.',
   piiCategories:
     'Which entity types to redact. OMIT this to use the account defaults, which is usually what the user wants — do not pass an empty list, which would mean "redact nothing" and return an unredacted file. Valid values: Person, Email, PhoneNumber, Address, Organization, Date, IBAN, CreditCard.',
   includedTerms:

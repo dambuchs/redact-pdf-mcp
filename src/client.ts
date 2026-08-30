@@ -72,6 +72,29 @@ const defaultSleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * Read a JSON body, mapping a mid-body failure to a RETRYABLE error.
+ *
+ * `request()` wraps only the fetch call, so everything that goes wrong after
+ * the headers arrive lands here instead: a connection reset while the body
+ * streams surfaces as a bare `TypeError('terminated')`, an abort during the
+ * read as a `DOMException`, and a proxy that answers 200 with an HTML error
+ * page as a `SyntaxError`. None of them is a RedactPdfError, and the poll loop
+ * treats anything that is not one as non-retryable — so an unwrapped blip on a
+ * status read ended a five-minute wait seconds into it, on exactly the kind of
+ * transient fault the loop exists to ride out.
+ */
+async function readJson<T>(response: Response, what: string): Promise<T> {
+  try {
+    return (await response.json()) as T;
+  } catch (cause) {
+    throw new RedactPdfError(
+      `Could not read the ${what} response from the server: ${cause instanceof Error ? cause.message : String(cause)}. This is usually a transient network or proxy fault rather than a problem with the request.`,
+      { code: 'network_error', retryable: true },
+    );
+  }
+}
+
+/**
  * Deterministic idempotency key: same bytes + same rules => same key.
  *
  * This is the guard against a looping agent burning the user's page quota. An
@@ -212,13 +235,13 @@ export class RedactPdfClient {
   /** `GET /v1/demo` — keyless. Proves the service is reachable with zero setup. */
   async demo(): Promise<DemoResult> {
     const response = await this.request('/v1/demo', { method: 'GET', authenticated: false });
-    return (await response.json()) as DemoResult;
+    return readJson<DemoResult>(response, 'demo');
   }
 
   /** `GET /v1/me` — validates the key and returns who it belongs to. */
   async me(): Promise<Me> {
     const response = await this.request('/v1/me', { method: 'GET' });
-    return (await response.json()) as Me;
+    return readJson<Me>(response, 'account');
   }
 
   /**
@@ -234,7 +257,7 @@ export class RedactPdfClient {
       method: 'GET',
       ...options,
     });
-    return (await response.json()) as Job;
+    return readJson<Job>(response, 'job status');
   }
 
   /** `DELETE /v1/jobs/{id}` — purge the job and its artifacts. */
@@ -304,7 +327,7 @@ export class RedactPdfClient {
       headers: { 'X-Idempotency-Key': idempotencyKey },
       timeoutMs: TRANSFER_TIMEOUT_MS,
     });
-    return (await response.json()) as Job;
+    return readJson<Job>(response, 'job creation');
   }
 
   /** Large PDFs: reserve slots, PUT straight to blob storage, then commit. */
@@ -326,7 +349,7 @@ export class RedactPdfClient {
         retention: rules.retention ?? 'ephemeral',
       }),
     });
-    const init = (await initResponse.json()) as JobUploadInit;
+    const init = await readJson<JobUploadInit>(initResponse, 'upload init');
 
     // No slots means this is an idempotent replay. That does NOT always mean the
     // job is fine: the server only mints slots for documents still `uploading`,
@@ -354,7 +377,7 @@ export class RedactPdfClient {
     const response = await this.request(`/v1/jobs/${encodeURIComponent(jobId)}/commit`, {
       method: 'POST',
     });
-    return (await response.json()) as Job;
+    return readJson<Job>(response, 'commit');
   }
 
   /**

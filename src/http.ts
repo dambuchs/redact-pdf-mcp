@@ -302,9 +302,22 @@ export function createHttpHandler(
   let draining = false;
 
   const handler = (req: IncomingMessage, res: ServerResponse) => {
-    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    // Only the pathname is ever used, so the base is a fixed placeholder rather
+    // than the Host header. Interpolating that header was a remote kill switch:
+    // it is attacker-controlled, `new URL` throws on a malformed authority, and
+    // the throw happens synchronously in the request listener where nothing
+    // catches it. One unauthenticated `Host: a b` — to /health, before any auth
+    // — printed a stack trace and exit(1), taking every in-flight redaction
+    // with it. A malformed target is a 400, never a crash.
+    let pathname: string;
+    try {
+      pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
+    } catch {
+      sendJson(res, 400, { error: 'Malformed request target.' });
+      return;
+    }
 
-    if (url.pathname === '/health') {
+    if (pathname === '/health') {
       // 503 while draining so the load balancer stops sending new work BEFORE
       // the listener closes; previously /health kept answering "ok" and then
       // connections were refused outright, giving no drain window at all.
@@ -319,7 +332,7 @@ export function createHttpHandler(
       return;
     }
 
-    if (url.pathname !== mcpPath) {
+    if (pathname !== mcpPath) {
       sendJson(res, 404, { error: `Not found. The MCP endpoint is ${mcpPath}.` });
       return;
     }

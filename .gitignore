@@ -2,8 +2,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
-# Never commit credentials: this repo is public, and an npm publish
-# token written to a project-local .npmrc would be pushed with it.
+# Never commit credentials. This package is mirrored to a PUBLIC repo and
+# published from there, so a project-local .npmrc holding an npm token would
+# be pushed with it.
 .npmrc
 .env
 .env.*

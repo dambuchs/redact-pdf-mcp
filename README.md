@@ -42,6 +42,8 @@ curl https://www.redact-pdf.ai/v1/demo
 
 - **Permanent, irreversible redaction.** The underlying text is deleted, not masked. It
   cannot be recovered by copy-paste, text extraction, or "remove object" in a PDF editor.
+- **PDFs and images.** Pass a PDF, JPEG or PNG. Photos and screenshots do not need converting
+  first; the output is a redacted PDF either way.
 - **Scanned documents.** OCR handles image-only PDFs and photos of documents.
 - **100+ languages** for entity detection.
 - **Eight entity types**: Person, Email, PhoneNumber, Address, Organization, Date, IBAN,
@@ -187,7 +189,7 @@ privilege you do not already have.
 ## Limits
 
 - 50 MB per PDF, 10 MB per image, 100 files per job.
-- PDF, JPEG and PNG. Convert other formats to PDF first.
+- PDF, JPEG and PNG in; always a PDF out. Convert other formats (DOCX, TIFF, HEIC) to PDF first.
 - On the remote server, base64 inflates a document by about a third, so prefer `file_url`
   for anything large.
 - Passing an empty `pii_categories` list is rejected: to the API an empty list means
