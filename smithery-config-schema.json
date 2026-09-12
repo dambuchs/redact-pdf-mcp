@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [],
+  "properties": {
+    "REDACT_PDF_API_KEY": {
+      "type": "string",
+      "title": "Redact PDF AI API key",
+      "description": "Your API key from https://www.redact-pdf.ai/dashboard/settings. Optional: without one, the keyless try_demo tool still works, so you can verify the server before signing up.",
+      "format": "password"
+    },
+    "REDACT_PDF_BASE_URL": {
+      "type": "string",
+      "title": "API base URL",
+      "description": "Point at a different API host. Defaults to https://www.redact-pdf.ai",
+      "default": "https://www.redact-pdf.ai"
+    }
+  }
+}

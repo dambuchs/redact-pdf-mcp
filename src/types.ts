@@ -61,6 +61,23 @@ export interface DemoResult {
   next_steps?: Record<string, string>;
 }
 
+/** `POST /v1/demo/redact` — keyless first-page redaction of the caller's own file. */
+export interface DemoRedactResult {
+  status: string;
+  message: string;
+  file_name: string;
+  total_pages: number | null;
+  redacted_pages: number;
+  // Categories found on the page; `masks` is boxes drawn, not entities.
+  detected_pii: Array<{ category: string; masks: number }>;
+  redacted_first_page_url: string;
+  link_expires_in_days: number;
+  next_steps?: Record<string, string>;
+}
+
+/** The keyless demo caps uploads well below the API's own limits. */
+export const DEMO_MAX_BYTES = 5 * 1024 * 1024;
+
 /** Redaction rules applied to one job. Omitted fields fall back to account defaults. */
 export interface RedactionRules {
   pii_categories?: string[];

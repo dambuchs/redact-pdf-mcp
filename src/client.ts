@@ -19,6 +19,7 @@ import { assertFileWithinLimits } from './inputs.js';
 import {
   MAX_FILES_PER_JOB,
   PII_CATEGORIES,
+  type DemoRedactResult,
   type DemoResult,
   type InputFile,
   type Job,
@@ -236,6 +237,34 @@ export class RedactPdfClient {
   async demo(): Promise<DemoResult> {
     const response = await this.request('/v1/demo', { method: 'GET', authenticated: false });
     return readJson<DemoResult>(response, 'demo');
+  }
+
+  /**
+   * `POST /v1/demo/redact` — keyless. Redacts the first page of the caller's
+   * own file so an agent can show real output before anyone signs up.
+   */
+  async demoRedact(file: InputFile, rules: RedactionRules = {}): Promise<DemoRedactResult> {
+    const form = new FormData();
+    const copy = new Uint8Array(file.bytes.byteLength);
+    copy.set(file.bytes);
+    form.append('file', new Blob([copy], { type: file.contentType }), file.filename);
+    if (rules.pii_categories) form.append('pii_categories', JSON.stringify(rules.pii_categories));
+    if (rules.pii_included_terms) {
+      form.append('pii_included_terms', JSON.stringify(rules.pii_included_terms));
+    }
+    if (rules.pii_excluded_terms) {
+      form.append('pii_excluded_terms', JSON.stringify(rules.pii_excluded_terms));
+    }
+    const response = await this.request('/v1/demo/redact', {
+      method: 'POST',
+      body: form,
+      authenticated: false,
+      timeoutMs: TRANSFER_TIMEOUT_MS,
+      // The demo is synchronous and processes the page while we wait; a retry
+      // would redact (and store) the page twice.
+      maxAttempts: 1,
+    });
+    return readJson<DemoRedactResult>(response, 'demo redaction');
   }
 
   /** `GET /v1/me` — validates the key and returns who it belongs to. */

@@ -540,6 +540,17 @@ describe('get_account_status', () => {
 });
 
 describe('try_demo', () => {
+  const demoRedactBody = {
+    status: 'ok',
+    message: 'Redacted the first page of in.pdf (3 pages).',
+    file_name: 'in.pdf',
+    total_pages: 3,
+    redacted_pages: 1,
+    detected_pii: [{ category: 'Person', masks: 2 }],
+    redacted_first_page_url: 'https://blob.example/in_demo.pdf?sig=x',
+    link_expires_in_days: 14,
+  };
+
   it('works with no API key configured and says so', async () => {
     const fetchImpl = fetchMock(async () =>
       jsonResponse({
@@ -555,9 +566,104 @@ describe('try_demo', () => {
     const out = payload(await client.callTool({ name: 'try_demo', arguments: {} }));
 
     expect(out.status).toBe('ok');
+    expect(out.mode).toBe('sample');
     expect(out.api_key_configured).toBe(false);
     expect(out.next_step).toMatch(/sign-up/);
+    // The ask must carry the offer, not just the URL.
+    expect(out.next_step).toMatch(/first document \(up to 5 pages\)/);
     expect(out.redacted_sample_pdf).toBe('https://www.redact-pdf.ai/v1/demo/sample.pdf');
+  });
+
+  it('redacts the first page of a real file with no key', async () => {
+    const fetchImpl = fetchMock(async () => jsonResponse(demoRedactBody));
+    const { client } = await connect('stdio', fetchImpl as unknown as typeof fetch, { apiKey: undefined });
+    const out = payload(
+      await client.callTool({ name: 'try_demo', arguments: { file_path: inputPath, pii_categories: ['Person'] } }),
+    );
+
+    expect(out.mode).toBe('first_page');
+    expect(out.total_pages).toBe(3);
+    expect(out.detected_and_removed).toEqual([{ category: 'Person', masks: 2 }]);
+    expect(out.redacted_first_page_pdf).toBe('https://blob.example/in_demo.pdf?sig=x');
+    expect(out.next_step).toMatch(/Only the first page/);
+
+    const [url, init] = callAt(fetchImpl, 0);
+    expect(url).toBe('https://www.redact-pdf.ai/v1/demo/redact');
+    expect(init.method).toBe('POST');
+    // Keyless by contract: no key configured, and none must be sent.
+    expect(new Headers(init.headers).get('X-API-Key')).toBeNull();
+    const form = init.body as FormData;
+    expect((form.get('file') as File).name).toBe('in.pdf');
+    expect(form.get('pii_categories')).toBe('["Person"]');
+  });
+
+  it('validates categories with the same enum as the redact tools', async () => {
+    const fetchImpl = fetchMock(async () => jsonResponse(demoRedactBody));
+    const { client } = await connect('stdio', fetchImpl as unknown as typeof fetch, { apiKey: undefined });
+    const { tools } = await client.listTools();
+    const schema = tools.find((t) => t.name === 'try_demo')?.inputSchema as { properties: Record<string, { items?: { enum?: string[] } }> };
+    expect(schema.properties.pii_categories?.items?.enum).toContain('Email');
+
+    // A lowercase name must be refused by the schema before any upload, not
+    // uploaded and reported as "no personal data found". The SDK answers a
+    // schema violation with a plain-text error block, not our JSON envelope.
+    const result = await client.callTool({ name: 'try_demo', arguments: { file_path: inputPath, pii_categories: ['email'] } });
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ type: string; text?: string }>)[0]?.text ?? '';
+    expect(text).toMatch(/pii_categories/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('refuses a source the transport cannot use instead of silently running the sample', async () => {
+    delete process.env.REDACT_PDF_ENABLE_URL_INPUT; // hosted default: no URL fetching
+    const fetchImpl = fetchMock(async () => jsonResponse(demoRedactBody));
+    const hosted = await connect('http', fetchImpl as unknown as typeof fetch, { apiKey: undefined });
+    const viaUrl = payload(
+      await hosted.client.callTool({ name: 'try_demo', arguments: { file_url: 'https://example.com/a.pdf' } }),
+    );
+    expect(viaUrl.code).toBe('invalid_request');
+    expect(viaUrl.error).toMatch(/file_base64/);
+    const viaPath = payload(await hosted.client.callTool({ name: 'try_demo', arguments: { file_path: inputPath } }));
+    expect(viaPath.code).toBe('invalid_request');
+    expect(viaPath.error).toMatch(/hosted/);
+
+    const local = await connect('stdio', fetchImpl as unknown as typeof fetch, { apiKey: undefined });
+    const viaBase64 = payload(
+      await local.client.callTool({ name: 'try_demo', arguments: { file_base64: 'JVBERi0xLjQ=', filename: 'a.pdf' } }),
+    );
+    expect(viaBase64.code).toBe('invalid_request');
+    expect(viaBase64.error).toMatch(/file_path/);
+
+    // None of those reached the network: no sample call, no upload.
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('refuses a file over the demo cap before touching the network', async () => {
+    const bigPath = join(tempDir, 'big.pdf');
+    await writeFile(bigPath, Buffer.alloc(5 * 1024 * 1024 + 1, 0x20));
+    const fetchImpl = fetchMock(async () => jsonResponse(demoRedactBody));
+    const { client } = await connect('stdio', fetchImpl as unknown as typeof fetch, { apiKey: undefined });
+    const out = payload(await client.callTool({ name: 'try_demo', arguments: { file_path: bigPath } }));
+
+    expect(out.code).toBe('invalid_request');
+    expect(out.error).toMatch(/5 MB/);
+    expect(out.error).toMatch(/redact_pdf_and_wait/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('accepts an inline file on the remote transport', async () => {
+    const fetchImpl = fetchMock(async () => jsonResponse(demoRedactBody));
+    const { client } = await connect('http', fetchImpl as unknown as typeof fetch, { apiKey: undefined });
+    const out = payload(
+      await client.callTool({
+        name: 'try_demo',
+        arguments: { file_base64: Buffer.from('%PDF-1.4').toString('base64'), filename: 'inline.pdf' },
+      }),
+    );
+
+    expect(out.mode).toBe('first_page');
+    const [, init] = callAt(fetchImpl, 0);
+    expect(((init.body as FormData).get('file') as File).name).toBe('inline.pdf');
   });
 });
 

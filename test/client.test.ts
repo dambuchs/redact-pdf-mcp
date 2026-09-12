@@ -434,3 +434,27 @@ describe('reading a response body', () => {
     expect(error.retryable).toBe(true);
   });
 });
+
+describe('demoRedact', () => {
+  it('posts the file as keyless multipart and never retries', async () => {
+    let calls = 0;
+    const fetchImpl = fetchMock(async () => {
+      calls += 1;
+      return jsonResponse({ detail: 'boom' }, 502);
+    });
+    const client = new RedactPdfClient({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch, sleep: async () => {} });
+    const file = { filename: 'a.png', contentType: 'image/png', bytes: new Uint8Array([1, 2, 3]) };
+
+    await expect(client.demoRedact(file, { pii_categories: ['Email'] })).rejects.toBeInstanceOf(RedactPdfError);
+
+    // A 502 is retryable elsewhere; the demo redacts synchronously, so a retry
+    // would process the page twice.
+    expect(calls).toBe(1);
+    const [url, init] = callAt(fetchImpl, 0);
+    expect(url).toBe('https://www.redact-pdf.ai/v1/demo/redact');
+    expect(new Headers(init.headers).get('X-API-Key')).toBeNull();
+    const form = init.body as FormData;
+    expect((form.get('file') as File).type).toBe('image/png');
+    expect(form.get('pii_categories')).toBe('["Email"]');
+  });
+});

@@ -23,7 +23,7 @@ async function main(): Promise<void> {
   // missing is more useful than refusing to start.
   if (!apiKey) {
     process.stderr.write(
-      '[redact-pdf-mcp] No REDACT_PDF_API_KEY set. try_demo will work; redacting real documents will not. Get a key at https://www.redact-pdf.ai/sign-up\n',
+      '[redact-pdf-mcp] No REDACT_PDF_API_KEY set. try_demo will work (it can redact the first page of a real file); redacting whole documents will not. Get a key at https://www.redact-pdf.ai/sign-up — a free account gets its first document (up to 5 pages) redacted free, no card.\n',
     );
   }
 

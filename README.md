@@ -23,19 +23,21 @@ Then ask: *"Redact the personal data in ~/Documents/contract.pdf"*.
 
 ## Try it with no API key
 
-The server ships a keyless tool, `try_demo`, so you can verify the whole path — client,
-server, API — before signing up for anything:
+The server ships a keyless tool, `try_demo`. Give it a file and it redacts the first
+page for real — no key, no account — and tells the agent what it found:
 
-> **You:** Use the redact-pdf server's try_demo tool.
+> **You:** Use the redact-pdf server's try_demo tool on ~/Documents/contract.pdf.
 >
-> **Claude:** The demo redacted a synthetic sample and removed 5 entities: Person
-> (`Jane Sample`), Email (`jane.sample@example.com`), PhoneNumber (`+1 415 555 0142`),
-> Organization (`Globex Demo Inc.`), Date (`2026-03-14`).
+> **Claude:** Redacted the first page of contract.pdf (4 pages). Personal data removed
+> on that page: Person, Email. Here is the redacted page (link valid 14 days). To redact
+> all 4 pages, a free account gets the first document (up to 5 pages) done in full, no card.
 
-Same thing from a terminal, no install:
+Call it with no file and it runs a built-in synthetic sample instead, which is the
+zero-configuration connectivity check. Same thing from a terminal, no install:
 
 ```bash
 curl https://www.redact-pdf.ai/v1/demo
+curl -F file=@contract.pdf https://www.redact-pdf.ai/v1/demo/redact
 ```
 
 ## What it does
@@ -98,8 +100,9 @@ claude mcp add redact-pdf --env REDACT_PDF_API_KEY=your_key -- npx -y redact-pdf
 code --add-mcp '{"name":"redact-pdf","command":"npx","args":["-y","redact-pdf-mcp"],"env":{"REDACT_PDF_API_KEY":"your_key"}}'
 ```
 
-Get an API key at [redact-pdf.ai/sign-up](https://www.redact-pdf.ai/sign-up). Without one,
-`try_demo` still works; everything else will tell the agent to ask you for a key.
+Get an API key at [redact-pdf.ai/sign-up](https://www.redact-pdf.ai/sign-up). A free account
+gets its first document (up to 5 pages) redacted in full, no card. Without a key,
+`try_demo` still works; everything else will tell the agent to ask you for one.
 
 ## Tools
 
@@ -109,7 +112,7 @@ Get an API key at [redact-pdf.ai/sign-up](https://www.redact-pdf.ai/sign-up). Wi
 | `redact_pdf` | Start a job and return immediately, for redacting several documents in parallel. |
 | `get_job_status` | Poll a job: `uploaded` → `analyzing` → `redacting` → `redacted` \| `error`. |
 | `download_redacted` | Fetch the redacted output for one document. |
-| `try_demo` | Keyless. Verify the server works with zero configuration. |
+| `try_demo` | Keyless. With a file: redact its first page for real. Without: run the built-in sample. |
 | `get_account_status` | Check the API key is valid and see the account, before a big batch. |
 
 Redaction rules, on either redact tool:
@@ -195,8 +198,8 @@ privilege you do not already have.
 - Passing an empty `pii_categories` list is rejected: to the API an empty list means
   "redact nothing", which would return an untouched file reported as redacted. Omit the
   argument to use your account defaults.
-- Billed per page against your plan quota and credit packs. A `quota_exceeded` error means
-  top up — the tools tell the agent not to retry it.
+- Billed per page against your plan quota and credit packs, after the free first document.
+  A `quota_exceeded` error means top up — the tools tell the agent not to retry it.
 
 ## Development
 

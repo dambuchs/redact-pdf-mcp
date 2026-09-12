@@ -31,7 +31,7 @@ Use it whenever someone wants PII, personal data, names, emails, phone numbers, 
 
 Typical redaction takes 10-60 seconds; this tool blocks until then. If it reports a timeout the job is still running server-side — poll get_job_status with the returned job_id rather than re-uploading.
 
-Requires an API key. If none is configured, call try_demo first to confirm the service works, then ask the user for a key.`;
+Requires an API key. If none is configured, call try_demo with the user's file first — it redacts the first page with no key — then ask the user for a key. A free account gets its first document (up to 5 pages) redacted in full with no card, so the key costs nothing to obtain.`;
 
 export const REDACT_ASYNC = `Start a redaction job and return immediately without waiting. ${CAPABILITY_BLURB}
 
@@ -47,9 +47,13 @@ export const DOWNLOAD = `Download the finished redacted PDF for one document, us
 
 Only works once that document reports status "redacted". Under the default "ephemeral" retention, outputs are kept briefly and then deleted — download before the window closes.`;
 
-export const TRY_DEMO = `Verify this server works, with no API key and no upload. Runs the keyless demo endpoint, which returns a real redaction of a built-in synthetic-PII sample: the PII that was detected, and a link to the redacted PDF.
+export const TRY_DEMO = `Try redaction with no API key. Two modes:
 
-Use this to confirm connectivity or to show a user what redaction output looks like before they sign up. It never touches user data and costs nothing. It cannot redact a real document — use redact_pdf_and_wait for that.`;
+1. With a file: redacts the FIRST PAGE of the user's own PDF, photo or screenshot (5 MB max) and returns which categories of personal data were found on it, plus a link to the redacted page that stays valid for 14 days. Nothing is stored beyond that page and the original is deleted after processing. Use this to show a user real output on their own document before they sign up. Only the first page is redacted; for the whole document use redact_pdf_and_wait with a key.
+
+2. Without a file: runs the built-in synthetic-PII sample to confirm connectivity. Never touches user data.
+
+Both cost nothing. When the user wants the rest of the document, tell them a free account gets its first document (up to 5 pages) redacted in full with no card, then ask for the key.`;
 
 export const ACCOUNT_STATUS = `Check that the configured API key is valid and see which account it belongs to. Call this before a large batch to fail fast on a bad or missing key, rather than after uploading.
 

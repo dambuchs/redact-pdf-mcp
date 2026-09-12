@@ -120,7 +120,7 @@ export async function errorFromResponse(response: Response): Promise<RedactPdfEr
   switch (status) {
     case 401:
       return new RedactPdfError(
-        `Unauthorized: the API key is missing or invalid. Set REDACT_PDF_API_KEY to a key from ${API_KEYS_URL} (create a free account at ${SIGN_UP_URL}). Do not retry until the key is fixed.`,
+        `Unauthorized: the API key is missing or invalid. Set REDACT_PDF_API_KEY to a key from ${API_KEYS_URL} (create a free account at ${SIGN_UP_URL}; the first document, up to 5 pages, is redacted free with no card). Do not retry until the key is fixed.`,
         { code: 'unauthorized', status, requestId, retryable: false },
       );
     case 402:

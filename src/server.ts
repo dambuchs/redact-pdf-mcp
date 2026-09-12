@@ -16,11 +16,12 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { METADATA_TIMEOUT_MS, RedactPdfClient, withoutEmptyRules } from './client.js';
 import { ACCOUNT_STATUS, DOWNLOAD, JOB_STATUS, PARAM, REDACT_ASYNC, REDACT_AND_WAIT, TRY_DEMO } from './descriptions.js';
-import { RedactPdfError } from './errors.js';
+import { RedactPdfError, SIGN_UP_URL } from './errors.js';
 import { logToolCall } from './observability.js';
 import { fileFromBase64, fileFromPath, fileFromUrl } from './inputs.js';
 import { isTerminal, pollUntilTerminal, type PollOptions } from './poll.js';
 import {
+  DEMO_MAX_BYTES,
   MAX_IMAGE_BYTES,
   MAX_PDF_BYTES,
   PII_CATEGORIES,
@@ -76,11 +77,21 @@ function readVersion(): string {
 const DEFAULT_MAX_INLINE_BYTES = 6 * 1024 * 1024;
 const MAX_TIMEOUT_SECONDS = 900;
 
-/** Shared redaction-rule arguments — identical across both redact tools. */
-const ruleShape = {
+/**
+ * What-to-redact arguments, shared by the redact tools AND the keyless demo.
+ * One validator on purpose: a hand-typed copy for the demo once accepted any
+ * string, so "email" (not "Email") uploaded the file, redacted nothing, and
+ * came back as a successful "no personal data found".
+ */
+const piiRuleShape = {
   pii_categories: z.array(z.enum(PII_CATEGORIES)).min(1).optional().describe(PARAM.piiCategories),
   pii_included_terms: z.array(z.string()).optional().describe(PARAM.includedTerms),
   pii_excluded_terms: z.array(z.string()).optional().describe(PARAM.excludedTerms),
+};
+
+/** Job-level arguments that only apply to billed jobs. */
+const ruleShape = {
+  ...piiRuleShape,
   retention: z.enum(['ephemeral', 'studio']).optional().describe(PARAM.retention),
   idempotency_key: z.string().max(200).optional().describe(PARAM.idempotencyKey),
 };
@@ -155,6 +166,14 @@ type SourceArgs = {
   filename?: string;
 };
 
+function hasSource(args: SourceArgs): boolean {
+  return Boolean(args.file_path || args.file_url || args.file_base64);
+}
+
+/** The one sentence that turns "get a key" into "it costs nothing to try". */
+export const FREE_FIRST_DOCUMENT_NOTE =
+  'A free account gets its first document (up to 5 pages) redacted in full, editable masks included, with no card.';
+
 async function resolveInput(
   mode: ServerMode,
   args: SourceArgs,
@@ -163,9 +182,20 @@ async function resolveInput(
 ): Promise<InputFile> {
   if (mode === 'stdio') {
     if (!args.file_path) {
-      throw new RedactPdfError('file_path is required.', { code: 'invalid_request' });
+      throw new RedactPdfError(
+        args.file_url || args.file_base64
+          ? 'This server runs on the user\'s machine and reads files by path: pass file_path (an absolute path). file_url and file_base64 are for the hosted server.'
+          : 'file_path is required.',
+        { code: 'invalid_request' },
+      );
     }
     return fileFromPath(args.file_path);
+  }
+  if (args.file_path) {
+    throw new RedactPdfError(
+      'This server is hosted and cannot read paths on your machine. Send the document inline as file_base64 (with filename).',
+      { code: 'invalid_request' },
+    );
   }
   if (args.file_url) {
     if (!urlInputEnabled()) {
@@ -444,7 +474,7 @@ export function createServer(options: CreateServerOptions): McpServer {
     { name: 'redact-pdf', version: VERSION },
     {
       instructions:
-        'Redact PDF AI permanently removes PII from documents. The sensitive text is deleted from the file, not covered with a black box. It accepts PDF, JPEG and PNG, so pass a photo or screenshot straight in rather than converting it to a PDF first; the output is a redacted PDF either way. For almost every request, call redact_pdf_and_wait once and you are done. try_demo needs no API key and is the fastest way to confirm the server is working.',
+        'Redact PDF AI permanently removes PII from documents. The sensitive text is deleted from the file, not covered with a black box. It accepts PDF, JPEG and PNG, so pass a photo or screenshot straight in rather than converting it to a PDF first; the output is a redacted PDF either way. For almost every request, call redact_pdf_and_wait once and you are done. try_demo needs no API key: with a file it redacts that file\'s first page for real, without one it runs a built-in sample, so it is both the connectivity check and the way to show a user real output before they sign up.',
     },
   );
 
@@ -643,26 +673,66 @@ export function createServer(options: CreateServerOptions): McpServer {
   );
 
   // ---- 5. Keyless demo. ----------------------------------------------------
+  // Every source argument is optional here: with none, the built-in sample
+  // runs. All four keys are declared on EVERY transport on purpose: the SDK
+  // strips arguments the schema does not name before the handler runs, so a
+  // key the transport does not support would otherwise vanish and the call
+  // would silently fall back to the sample. Declared, it reaches resolveInput,
+  // which refuses it with a message that says what to send instead.
+  const demoSourceShape: z.ZodRawShape = {
+    file_path: z.string().min(1).optional().describe(PARAM.filePath),
+    file_url: z.string().url().optional().describe(PARAM.fileUrl),
+    file_base64: z.string().optional().describe(PARAM.fileBase64),
+    filename: z.string().optional().describe(PARAM.filename),
+  };
   server.registerTool(
     'try_demo',
     {
-      title: 'Try redaction with no API key',
+      title: 'Try redaction with no API key (first page of a real file, or a sample)',
       description: TRY_DEMO,
-      inputSchema: {},
-      annotations: { readOnlyHint: true, openWorldHint: true },
+      inputSchema: { ...demoSourceShape, ...piiRuleShape },
+      // With a file it uploads user data and creates a server-side demo record.
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     },
-    guard('try_demo', async () => {
-      const demo = await client.demo();
+    guard('try_demo', async (args: SourceArgs & RuleArgs) => {
+      const keyNote = client.hasApiKey
+        ? 'An API key is configured — call redact_pdf_and_wait to redact the whole document.'
+        : `No API key is configured. To redact whole documents, get a key at ${SIGN_UP_URL} and set REDACT_PDF_API_KEY. ${FREE_FIRST_DOCUMENT_NOTE}`;
+
+      if (!hasSource(args)) {
+        const demo = await client.demo();
+        return jsonResult({
+          status: 'ok',
+          mode: 'sample',
+          message: demo.message,
+          sample_input: demo.sample_input,
+          detected_and_removed: demo.detected_pii,
+          redacted_sample_pdf: `${client.baseUrl}${demo.redacted_pdf_path}`,
+          api_key_configured: client.hasApiKey,
+          next_step: `${keyNote} To show the user real output first, call try_demo again with their file: it redacts the first page with no key.`,
+        });
+      }
+
+      const file = await resolveInput(mode, args, downloadFetch, resolveHost);
+      if (file.bytes.byteLength > DEMO_MAX_BYTES) {
+        throw new RedactPdfError(
+          `"${file.filename}" is ${(file.bytes.byteLength / 1024 / 1024).toFixed(1)} MB; the keyless demo takes files up to ${DEMO_MAX_BYTES / 1024 / 1024} MB. Use redact_pdf_and_wait with an API key for this one.`,
+          { code: 'invalid_request' },
+        );
+      }
+      const demo = await client.demoRedact(file, rulesFrom(args));
       return jsonResult({
         status: 'ok',
+        mode: 'first_page',
         message: demo.message,
-        sample_input: demo.sample_input,
+        file_name: demo.file_name,
+        total_pages: demo.total_pages,
+        redacted_pages: demo.redacted_pages,
         detected_and_removed: demo.detected_pii,
-        redacted_sample_pdf: `${client.baseUrl}${demo.redacted_pdf_path}`,
+        redacted_first_page_pdf: demo.redacted_first_page_url,
+        link_expires_in_days: demo.link_expires_in_days,
         api_key_configured: client.hasApiKey,
-        next_step: client.hasApiKey
-          ? 'An API key is configured — call redact_pdf_and_wait to redact a real document.'
-          : 'No API key is configured. To redact real documents, get a key at https://www.redact-pdf.ai/sign-up and set REDACT_PDF_API_KEY.',
+        next_step: `${keyNote} Only the first page was redacted here.`,
       });
     }),
   );

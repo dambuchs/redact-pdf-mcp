@@ -8,3 +8,6 @@ dist/
 .npmrc
 .env
 .env.*
+
+# Built by build-mcpb.sh on release; a 3 MB binary does not belong in git.
+*.mcpb
