@@ -240,6 +240,30 @@ privilege you do not already have.
 - **Never overwrites.** In stdio mode the redacted PDF is written atomically and the tool
   refuses to clobber an existing file.
 
+## Privacy Policy
+
+The full policy is at [redact-pdf.ai/privacy](https://www.redact-pdf.ai/privacy). It covers
+the website, the app and the API this server calls. In short:
+
+- **What is collected.** The documents you send, their processing metadata (status, page
+  count, selected PII categories) and the redaction masks; your account identifier and
+  email if you use an API key; billing data if you pay. This MCP server itself collects
+  nothing and sends no telemetry.
+- **How it is used.** To run the redaction you asked for, and to operate, secure and bill
+  your account. Documents are processed for OCR and PII detection only and are never used
+  to train AI models.
+- **Where it is stored.** Microsoft Azure in the EU and Switzerland, encrypted in transit
+  (TLS 1.2+) and at rest (AES-256).
+- **Who it is shared with.** Documents go only to Microsoft Azure (storage, OCR and PII
+  detection). Account and billing data go to Clerk and Stripe. Internal operational alerts,
+  which can include a file name, go to the team's Slack. The policy lists every
+  subprocessor.
+- **How long it is kept.** Under the default `ephemeral` retention the original is deleted
+  after processing; the redacted output follows your account's retention window (14 days
+  by default) and can be deleted at any time. Files sent to the keyless `try_demo` are
+  deleted after the first page is redacted; that page is kept 14 days.
+- **Contact.** info@redact-pdf.ai for privacy requests and questions.
+
 ## Limits
 
 - 50 MB per PDF, 10 MB per image, 100 files per job.

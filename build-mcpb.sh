@@ -25,7 +25,7 @@ echo "Building redact-pdf-mcp $pkg_version"
 (cd "$SRC" && npm run build >/dev/null)
 
 cp -R "$SRC/dist" "$STAGE/dist"
-cp "$SRC/manifest.json" "$SRC/package.json" "$SRC/package-lock.json" "$SRC/README.md" "$SRC/LICENSE" "$STAGE/"
+cp "$SRC/manifest.json" "$SRC/package.json" "$SRC/package-lock.json" "$SRC/README.md" "$SRC/LICENSE" "$SRC/icon.png" "$STAGE/"
 
 # Runtime dependencies only. --ignore-scripts because nothing here needs a
 # lifecycle script, and a bundle that runs one on a user's machine is a

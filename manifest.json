@@ -11,8 +11,9 @@
     "url": "https://www.redact-pdf.ai"
   },
   "homepage": "https://www.redact-pdf.ai/developers",
-  "documentation": "https://www.redact-pdf.ai/docs",
+  "documentation": "https://github.com/dambuchs/redact-pdf-mcp#readme",
   "support": "https://github.com/dambuchs/redact-pdf-mcp/issues",
+  "icon": "icon.png",
   "license": "MIT",
   "keywords": [
     "pdf",
@@ -26,6 +27,9 @@
     "anonymization",
     "de-identification",
     "mcp"
+  ],
+  "privacy_policies": [
+    "https://www.redact-pdf.ai/privacy"
   ],
   "repository": {
     "type": "git",
@@ -44,6 +48,61 @@
       }
     }
   },
+  "tools": [
+    {
+      "name": "redact_pdf_and_wait",
+      "description": "Redact a PDF, photo or screenshot and return the redacted PDF in one call. The sensitive text is removed from the file, not covered."
+    },
+    {
+      "name": "redact_pdf",
+      "description": "Start a redaction job without waiting, for redacting several documents in parallel."
+    },
+    {
+      "name": "get_job_status",
+      "description": "Check the progress of a redaction job."
+    },
+    {
+      "name": "download_redacted",
+      "description": "Download the finished redacted PDF for one document."
+    },
+    {
+      "name": "try_demo",
+      "description": "No API key needed: redact the first page of your own file, or run a built-in sample."
+    },
+    {
+      "name": "get_account_status",
+      "description": "Check that the API key is valid and see the account it belongs to."
+    }
+  ],
+  "tools_generated": false,
+  "prompts": [
+    {
+      "name": "redact_before_sending",
+      "description": "Redact personal data in one document before sharing it.",
+      "arguments": [
+        "file_path"
+      ],
+      "text": "Redact the personal data in ${arguments.file_path} and save the redacted PDF next to it."
+    },
+    {
+      "name": "redact_folder_keep_company",
+      "description": "Redact a folder of PDFs while keeping your company name visible.",
+      "arguments": [
+        "folder",
+        "company_name"
+      ],
+      "text": "Redact names, email addresses, phone numbers and IBANs in every PDF in ${arguments.folder}. Keep ${arguments.company_name} visible."
+    },
+    {
+      "name": "try_on_my_file",
+      "description": "See what the redaction does on your own file, with no API key.",
+      "arguments": [
+        "file_path"
+      ],
+      "text": "Use the redact-pdf try_demo tool on ${arguments.file_path} and tell me what it found on the first page."
+    }
+  ],
+  "prompts_generated": false,
   "user_config": {
     "api_key": {
       "type": "string",
@@ -54,6 +113,10 @@
     }
   },
   "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32"
+    ],
     "runtimes": {
       "node": ">=18.0.0"
     }

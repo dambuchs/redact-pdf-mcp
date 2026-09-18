@@ -17,7 +17,7 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 rsync -a --delete \
   --exclude node_modules --exclude dist --exclude .git \
-  --exclude '*.tgz' --exclude .npmrc --exclude '.env*' \
+  --exclude '*.tgz' --exclude '*.mcpb' --exclude .npmrc --exclude '.env*' \
   "$SRC"/ "$MIRROR"/
 
 echo "Synced $SRC -> $MIRROR"
