@@ -1,7 +1,7 @@
 {
   "name": "redact-pdf-mcp",
-  "version": "0.2.0",
-  "description": "MCP server for Redact PDF AI — permanently redact PII from PDFs. Give an agent a PDF, get back a redacted PDF with the sensitive text removed, not just covered.",
+  "version": "0.2.1",
+  "description": "Permanently redact PII from PDFs, scans and screenshots through your AI agent: the text is removed, not covered. EU & Swiss hosted, never used for AI training. MCP server for Redact PDF AI.",
   "mcpName": "io.github.dambuchs/redact-pdf-mcp",
   "keywords": [
     "mcp",
@@ -16,7 +16,15 @@
     "anonymization",
     "ocr",
     "claude",
-    "ai-agent"
+    "ai-agent",
+    "mcp-server",
+    "anonymize",
+    "de-identification",
+    "document-redaction",
+    "privacy",
+    "claude-desktop",
+    "cursor",
+    "gdpr-compliance"
   ],
   "homepage": "https://www.redact-pdf.ai/developers",
   "repository": {

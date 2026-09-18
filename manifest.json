@@ -2,9 +2,9 @@
   "manifest_version": "0.2",
   "name": "redact-pdf-mcp",
   "display_name": "Redact PDF AI",
-  "version": "0.2.0",
-  "description": "Permanently redact PII from PDFs. The text is removed, not covered. OCR for scanned documents.",
-  "long_description": "An MCP server that permanently redacts PII from PDFs, photos and screenshots. The sensitive text is deleted from the file rather than covered with a black rectangle, so it cannot be recovered by copy-paste, text extraction, or \"remove object\" in a PDF editor.\n\nMost MCP \"redaction\" servers scrub PII out of prompt text. This one takes a real document and returns a real redacted document.\n\nIncludes a keyless try_demo tool, so an agent can verify the server works before any API key is configured. Handles scanned documents via OCR across 100+ languages and detects 8 entity types. Documents are processed on EU/Swiss infrastructure. The server is stateless and sends no telemetry.",
+  "version": "0.2.1",
+  "description": "Permanently redact PII from PDFs and scans. EU/Swiss-hosted, never used to train AI models.",
+  "long_description": "An MCP server that permanently redacts PII from PDFs, photos and screenshots. The sensitive text is deleted from the file rather than covered with a black rectangle, so it cannot be recovered by copy-paste, text extraction, or \"remove object\" in a PDF editor.\n\nMost MCP \"redaction\" servers scrub PII out of prompt text. This one takes a real document and returns a real redacted document.\n\nIncludes a keyless try_demo tool, so an agent can verify the server works before any API key is configured. Handles scanned documents via OCR across 100+ languages and detects 8 entity types. Documents are processed on Microsoft Azure in the EU and Switzerland, encrypted in transit and at rest, never used to train AI models, and the original is deleted after processing. The server itself is stateless and sends no telemetry.",
   "author": {
     "name": "Redact PDF AI",
     "email": "info@redact-pdf.ai",
@@ -22,7 +22,10 @@
     "gdpr",
     "hipaa",
     "ocr",
-    "documents"
+    "documents",
+    "anonymization",
+    "de-identification",
+    "mcp"
   ],
   "repository": {
     "type": "git",

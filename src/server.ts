@@ -474,7 +474,7 @@ export function createServer(options: CreateServerOptions): McpServer {
     { name: 'redact-pdf', version: VERSION },
     {
       instructions:
-        'Redact PDF AI permanently removes PII from documents. The sensitive text is deleted from the file, not covered with a black box. It accepts PDF, JPEG and PNG, so pass a photo or screenshot straight in rather than converting it to a PDF first; the output is a redacted PDF either way. For almost every request, call redact_pdf_and_wait once and you are done. try_demo needs no API key: with a file it redacts that file\'s first page for real, without one it runs a built-in sample, so it is both the connectivity check and the way to show a user real output before they sign up.',
+        'Redact PDF AI permanently removes PII from documents. The sensitive text is deleted from the file, not covered with a black box. Documents are processed in the EU and Switzerland and are never used to train AI models. It accepts PDF, JPEG and PNG, so pass a photo or screenshot straight in rather than converting it to a PDF first; the output is a redacted PDF either way. For almost every request, call redact_pdf_and_wait once and you are done. try_demo needs no API key: with a file it redacts that file\'s first page for real, without one it runs a built-in sample, so it is both the connectivity check and the way to show a user real output before they sign up.',
     },
   );
 

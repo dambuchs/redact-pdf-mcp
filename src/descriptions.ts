@@ -9,7 +9,7 @@
  */
 
 export const CAPABILITY_BLURB =
-  'Permanent, irreversible redaction: the sensitive text is deleted from the file, not hidden behind a black rectangle, so it cannot be recovered by copy-paste, "remove object", or text extraction. Handles scanned documents via OCR and detects PII in 100+ languages. Documents are processed on EU/Swiss infrastructure.';
+  'Permanent, irreversible redaction: the sensitive text is deleted from the file, not hidden behind a black rectangle, so it cannot be recovered by copy-paste, "remove object", or text extraction. Handles scanned documents via OCR and detects PII in 100+ languages. Documents are processed on Microsoft Azure in the EU and Switzerland, encrypted in transit and at rest, never used to train AI models, and the original is deleted after processing.';
 
 /**
  * Stated in every tool that takes a file.
@@ -45,7 +45,7 @@ Only "redacted" and "error" are final; anything else means the work is still in 
 
 export const DOWNLOAD = `Download the finished redacted PDF for one document, using the document id from redact_pdf or get_job_status.
 
-Only works once that document reports status "redacted". Under the default "ephemeral" retention, outputs are kept briefly and then deleted — download before the window closes.`;
+Only works once that document reports status "redacted". Under the default "ephemeral" retention the original is already gone; the redacted output is kept for the account's retention window (14 days by default) and then deleted.`;
 
 export const TRY_DEMO = `Try redaction with no API key. Two modes:
 

@@ -8,6 +8,9 @@ Most "redaction" MCP servers scrub PII out of prompt text. This one takes a real
 and returns a real redacted document.
 
 [![npm](https://img.shields.io/npm/v/redact-pdf-mcp?color=cb3837&logo=npm)](https://www.npmjs.com/package/redact-pdf-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/redact-pdf-mcp?color=cb3837)](https://www.npmjs.com/package/redact-pdf-mcp)
+[![No AI training](https://img.shields.io/badge/your%20documents-never%20used%20for%20AI%20training-2ea44f)](https://www.redact-pdf.ai/security)
+[![EU & Swiss hosted](https://img.shields.io/badge/processed%20in-EU%20%26%20Switzerland-003399)](https://www.redact-pdf.ai/security)
 [![MCP registry](https://img.shields.io/badge/MCP%20registry-io.github.dambuchs%2Fredact--pdf--mcp-blue)](https://registry.modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
 
@@ -20,6 +23,54 @@ claude mcp add redact-pdf -- npx -y redact-pdf-mcp
 Then ask: *"Redact the personal data in ~/Documents/contract.pdf"*.
 
 ---
+
+## Your data
+
+You are sending the document the agent is meant to protect, so this comes first.
+
+- **Never used to train AI models** — not ours, not Microsoft's, not anyone's. The Azure
+  AI services used for OCR and PII detection run with content logging disabled, so
+  document content is not retained or used for model improvement.
+- **Processed in the EU and Switzerland** on Microsoft Azure.
+- **Encrypted** with TLS 1.2+ in transit and AES-256 at rest.
+- **The original is deleted after processing** under the default `ephemeral` retention.
+  The redacted output is kept for your account's retention window (14 days by default,
+  configurable) and can be purged at any time with `DELETE /v1/jobs/{job_id}`.
+- **Certified infrastructure.** Azure holds SOC 2 Type II, ISO 27001, ISO 27017 and
+  ISO 27018 certifications and is HIPAA-eligible under Microsoft's BAA. Redact PDF AI
+  itself is not independently audited for these frameworks; it is built so legal, medical
+  and finance teams can use it inside their own compliance posture.
+- **The MCP server sends no telemetry of its own** — see
+  [what the server does locally](#what-the-server-does-locally).
+
+Details: [redact-pdf.ai/security](https://www.redact-pdf.ai/security) ·
+[privacy policy](https://www.redact-pdf.ai/privacy)
+
+## Why not let the agent redact it itself?
+
+An agent can find names in text. It cannot make a PDF safe on its own:
+
+- **A black box is not a redaction.** Drawing a rectangle over text leaves the text layer
+  underneath; anyone can select, copy or extract it. This server rasterizes each page and
+  drops the text layer and metadata, so there is nothing left to recover.
+- **Scans have no text to search.** Contracts, IDs and statements are often images. OCR
+  runs first, in 100+ languages, then PII detection runs over what it read.
+- **Detection is a model, not a regex.** Names, addresses and organizations do not follow a
+  pattern. The detector is purpose-built for PII, and your always-redact and never-redact
+  lists cover the rest.
+
+## Examples
+
+Prompts that work as-is once the server is installed:
+
+- *"Redact the personal data in ~/Documents/lease.pdf before I send it to the agency."*
+- *"Redact names, emails and IBANs in every PDF in ~/Downloads/statements, keep our company
+  name visible."* — the agent passes `pii_excluded_terms` for the company name and fans
+  out with `redact_pdf`.
+- *"Here is a screenshot of a customer ticket. Remove the phone number and address, then
+  give me a PDF I can attach."* — images go in directly, no conversion.
+- *"Try the redact-pdf demo on ~/Documents/contract.pdf so I can see what it does."* —
+  keyless, first page only.
 
 ## Try it with no API key
 
@@ -50,7 +101,7 @@ curl -F file=@contract.pdf https://www.redact-pdf.ai/v1/demo/redact
 - **100+ languages** for entity detection.
 - **Eight entity types**: Person, Email, PhoneNumber, Address, Organization, Date, IBAN,
   CreditCard — plus your own always-redact and never-redact term lists.
-- **EU/Swiss processing.**
+- **EU/Swiss processing**, never used for AI training — see [Your data](#your-data).
 - **Human review when it matters.** `retention: "studio"` keeps the detected masks so a
   person can check and adjust them before export.
 
@@ -174,7 +225,7 @@ privilege you do not already have.
 | `REDACT_PDF_ENABLE_URL_INPUT` | unset | Accept `file_url` on the remote server. Off by default — see the DNS-rebinding note above. |
 | `REDACT_PDF_ALLOW_PRIVATE_URLS` | unset | Self-hosted only: permit `file_url` to reach private addresses. Never set this on a publicly reachable server. |
 
-## Privacy
+## What the server does locally
 
 - **No telemetry.** The server makes exactly the API calls its tools describe, and nothing
   else. No analytics, no error reporting, no phone-home.
@@ -213,6 +264,7 @@ npm run test:integration # hits the live keyless demo endpoint; no key needed
 ## Links
 
 - API docs: [redact-pdf.ai/developers](https://www.redact-pdf.ai/developers)
+- Security and data handling: [redact-pdf.ai/security](https://www.redact-pdf.ai/security)
 - OpenAPI spec: [redact-pdf.ai/openapi.yaml](https://www.redact-pdf.ai/openapi.yaml)
 - LLM index: [redact-pdf.ai/llms.txt](https://www.redact-pdf.ai/llms.txt)
 
