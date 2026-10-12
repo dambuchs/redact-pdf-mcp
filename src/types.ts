@@ -16,6 +16,13 @@ export type PiiCategory = (typeof PII_CATEGORIES)[number];
 
 export type RetentionMode = 'ephemeral' | 'studio';
 
+/**
+ * `redact` draws black boxes; `pseudonymize` replaces each entity with a
+ * consistent tag ([Person 1], [Org 1]...) and makes a tag -> original table available.
+ */
+export const REDACTION_MODES = ['redact', 'pseudonymize'] as const;
+export type RedactionMode = (typeof REDACTION_MODES)[number];
+
 /** `redacted` and `error` are terminal; everything else means "still working". */
 export type DocumentStatus = 'uploading' | 'uploaded' | 'analyzing' | 'redacting' | 'redacted' | 'error';
 
@@ -31,6 +38,8 @@ export interface Job {
   job_id: string;
   status: DocumentStatus;
   retention: RetentionMode;
+  /** Absent on servers older than mode support; treat as `redact`. */
+  mode?: RedactionMode;
   created_at: string;
   documents: JobDocument[];
 }
@@ -70,6 +79,9 @@ export interface DemoRedactResult {
   redacted_pages: number;
   // Categories found on the page; `masks` is boxes drawn, not entities.
   detected_pii: Array<{ category: string; masks: number }>;
+  mode?: RedactionMode;
+  /** Pseudonymize mode only: the tags drawn on the page, in tag order. */
+  tags?: string[];
   redacted_first_page_url: string;
   link_expires_in_days: number;
   next_steps?: Record<string, string>;
@@ -84,6 +96,7 @@ export interface RedactionRules {
   pii_included_terms?: string[];
   pii_excluded_terms?: string[];
   retention?: RetentionMode;
+  mode?: RedactionMode;
 }
 
 /** One file to redact, already in memory. */

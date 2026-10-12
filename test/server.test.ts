@@ -78,7 +78,7 @@ describe('tool listing', () => {
     expect(tools[0]?.name).toBe('redact_pdf_and_wait');
   });
 
-  it('exposes exactly the six documented tools', async () => {
+  it('exposes exactly the seven documented tools', async () => {
     const { client } = await connect('stdio', fetchMock() as unknown as typeof fetch);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name)).toEqual([
@@ -86,6 +86,7 @@ describe('tool listing', () => {
       'redact_pdf',
       'get_job_status',
       'download_redacted',
+      'download_correspondence',
       'try_demo',
       'get_account_status',
     ]);

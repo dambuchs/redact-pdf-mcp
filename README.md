@@ -102,6 +102,10 @@ curl -F file=@contract.pdf https://www.redact-pdf.ai/v1/demo/redact
 - **Eight entity types**: Person, Email, PhoneNumber, Address, Organization, Date, IBAN,
   CreditCard — plus your own always-redact and never-redact term lists.
 - **EU/Swiss processing**, never used for AI training — see [Your data](#your-data).
+- **Pseudonymize instead of black boxes.** `mode: "pseudonymize"` replaces each entity with a
+  consistent tag (`[Person 1]`, `[Org 1]`, `[Address 1]`...), identical on every page and for every variant of
+  a name, so the document stays readable for a colleague or another AI. The text is still
+  removed, not covered, and `redact_pdf_and_wait` also returns the tag → original table (CSV).
 - **Human review when it matters.** `retention: "studio"` keeps the detected masks so a
   person can check and adjust them before export.
 
@@ -163,6 +167,7 @@ gets its first document (up to 5 pages) redacted in full, no card. Without a key
 | `redact_pdf` | Start a job and return immediately, for redacting several documents in parallel. |
 | `get_job_status` | Poll a job: `uploaded` → `analyzing` → `redacting` → `redacted` \| `error`. |
 | `download_redacted` | Fetch the redacted output for one document. |
+| `download_correspondence` | Fetch the tag → original table of a pseudonymized document (`mode: "pseudonymize"`). |
 | `try_demo` | Keyless. With a file: redact its first page for real. Without: run the built-in sample. |
 | `get_account_status` | Check the API key is valid and see the account, before a big batch. |
 
@@ -174,6 +179,7 @@ Redaction rules, on either redact tool:
 | `pii_included_terms` | Always redact these, even if not detected as PII (codenames, case numbers). |
 | `pii_excluded_terms` | Never redact these, even if detected (your own company name). |
 | `retention` | `ephemeral` (default) deletes the original after processing. `studio` keeps masks for human review. |
+| `mode` | `redact` (default) draws black boxes. `pseudonymize` draws consistent tags such as `[Person 1]` and returns the correspondence table (stdio: written next to the PDF as `*-correspondence.csv`; remote: inline as `correspondence_csv`). Also accepted by `try_demo`. |
 
 ## Remote server
 

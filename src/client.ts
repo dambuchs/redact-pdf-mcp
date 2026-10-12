@@ -117,6 +117,10 @@ export function deriveIdempotencyKey(files: InputFile[], rules: RedactionRules):
       included: rules.pii_included_terms ? [...rules.pii_included_terms].sort() : null,
       excluded: rules.pii_excluded_terms ? [...rules.pii_excluded_terms].sort() : null,
       retention: rules.retention ?? 'ephemeral',
+      // Only when it changes the output, so a redact-mode call derives the
+      // same key it did before modes existed (a replay within 24h still
+      // finds its job).
+      ...(rules.mode && rules.mode !== 'redact' ? { mode: rules.mode } : {}),
     }),
   );
   return `mcp-${hash.digest('hex').slice(0, 48)}`;
@@ -255,6 +259,7 @@ export class RedactPdfClient {
     if (rules.pii_excluded_terms) {
       form.append('pii_excluded_terms', JSON.stringify(rules.pii_excluded_terms));
     }
+    if (rules.mode) form.append('mode', rules.mode);
     const response = await this.request('/v1/demo/redact', {
       method: 'POST',
       body: form,
@@ -304,6 +309,34 @@ export class RedactPdfClient {
   }
 
   /**
+   * `GET /v1/documents/{id}/correspondence` — the tag -> original table of a
+   * document redacted with mode `pseudonymize`, as CSV text
+   * (placeholder,label,category,original). Personal data: hand it to the user,
+   * never log it.
+   */
+  async downloadCorrespondence(documentId: string): Promise<string> {
+    let response: Response;
+    try {
+      response = await this.request(
+        `/v1/documents/${encodeURIComponent(documentId)}/correspondence`,
+        { method: 'GET', timeoutMs: METADATA_TIMEOUT_MS },
+      );
+    } catch (error) {
+      throw correspondenceError(error);
+    }
+    try {
+      // text() decodes UTF-8 and drops the BOM the server adds for Excel; the
+      // stdio writer puts it back on the file it saves.
+      return await response.text();
+    } catch (cause) {
+      throw new RedactPdfError(
+        `Could not read the correspondence table: ${cause instanceof Error ? cause.message : String(cause)}.`,
+        { code: 'network_error', retryable: true },
+      );
+    }
+  }
+
+  /**
    * Create a job, picking the upload path that fits the files.
    *
    * Mixed batches (images + a large PDF) go through multipart as a whole: the
@@ -349,6 +382,7 @@ export class RedactPdfClient {
       form.append('pii_excluded_terms', JSON.stringify(rules.pii_excluded_terms));
     }
     form.append('retention', rules.retention ?? 'ephemeral');
+    if (rules.mode) form.append('mode', rules.mode);
 
     const response = await this.request('/v1/jobs', {
       method: 'POST',
@@ -490,6 +524,38 @@ function isAwaitingUploadCommit(doc: JobDocument): boolean {
 }
 
 /**
+ * The generic status messages are written for job creation (409 = "an
+ * identical request is in flight, retry with the same arguments", 422 = the
+ * idempotency key). On the correspondence route they mean something else, and
+ * retrying never helps, so say what does.
+ */
+function correspondenceError(error: unknown): unknown {
+  if (!(error instanceof RedactPdfError)) {
+    return error;
+  }
+  const opts = { status: error.status, requestId: error.requestId, retryable: false };
+  switch (error.status) {
+    case 404:
+      return new RedactPdfError(
+        'No correspondence table for this document: it was not redacted with mode "pseudonymize", is not finished yet, or has been deleted. Only a pseudonymized document has one.',
+        { ...opts, code: 'not_found' },
+      );
+    case 409:
+      return new RedactPdfError(
+        'The correspondence table no longer matches the redacted PDF on file: the document was edited in the Redact PDF AI Studio after it was produced. Ask the user to open it in the Studio and download it again there; that refreshes both the PDF and the table. Retrying this call will not help.',
+        { ...opts, code: 'conflict' },
+      );
+    case 422:
+      return new RedactPdfError(
+        'Some tags have no stored original name: the document was analysed in redact mode and switched to pseudonymize afterwards. Ask the user to run the detection again in Pseudonymize mode in the Studio. Retrying this call will not help.',
+        { ...opts, code: 'invalid_request' },
+      );
+    default:
+      return error;
+  }
+}
+
+/**
  * Strip empty rule arrays before anything reaches the wire.
  *
  * The API treats an empty list as a deliberate instruction rather than an
@@ -530,6 +596,9 @@ export function withoutEmptyRules(rules: RedactionRules): RedactionRules {
   const excluded = clean(rules.pii_excluded_terms);
   if (excluded) cleaned.pii_excluded_terms = excluded;
   if (rules.retention) cleaned.retention = rules.retention;
+  // Rebuilt field by field, so a field not copied here never reaches the wire:
+  // dropping mode would silently return black boxes for a pseudonymize call.
+  if (rules.mode) cleaned.mode = rules.mode;
   return cleaned;
 }
 

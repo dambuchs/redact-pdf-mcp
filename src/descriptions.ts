@@ -29,6 +29,8 @@ ${ACCEPTED_INPUTS}
 
 Use it whenever someone wants PII, personal data, names, emails, phone numbers, addresses, bank details or card numbers removed from a document before sharing, filing, publishing or sending it to a third party — including GDPR/HIPAA/FOIA workflows. Scanned pages, phone photos of documents and screenshots all work.
 
+To anonymize or pseudonymize a document while keeping it readable (who did what stays clear, e.g. before pasting it into an AI or sending it to an expert), pass mode "pseudonymize": every entity becomes a consistent tag like [Person 1] and you also get the tag -> original table.
+
 Typical redaction takes 10-60 seconds; this tool blocks until then. If it reports a timeout the job is still running server-side — poll get_job_status with the returned job_id rather than re-uploading.
 
 Requires an API key. If none is configured, call try_demo with the user's file first — it redacts the first page with no key — then ask the user for a key. A free account gets its first document (up to 5 pages) redacted in full with no card, so the key costs nothing to obtain.`;
@@ -45,13 +47,19 @@ Only "redacted" and "error" are final; anything else means the work is still in 
 
 export const DOWNLOAD = `Download the finished redacted PDF for one document, using the document id from redact_pdf or get_job_status.
 
-Only works once that document reports status "redacted". Under the default "ephemeral" retention the original is already gone; the redacted output is kept for the account's retention window (14 days by default) and then deleted.`;
+Only works once that document reports status "redacted". For a job created with mode "pseudonymize", get the tag -> original table with download_correspondence (redact_pdf_and_wait fetches it for you). Under the default "ephemeral" retention the original is already gone; the redacted output is kept for the account's retention window (14 days by default) and then deleted.`;
+
+export const DOWNLOAD_CORRESPONDENCE = `Download the correspondence table of a document redacted with mode "pseudonymize": one CSV row per tag (placeholder, the user's rename, category, original text), so the names can be restored later.
+
+Only for pseudonymized documents with status "redacted"; a redact-mode document has no table. The table re-identifies the document: keep it with the user and never send it alongside the redacted PDF. On the remote server it comes back inline, which puts the original names into this conversation; on a local server it is written to a file instead.`;
 
 export const TRY_DEMO = `Try redaction with no API key. Two modes:
 
 1. With a file: redacts the FIRST PAGE of the user's own PDF, photo or screenshot (5 MB max) and returns which categories of personal data were found on it, plus a link to the redacted page that stays valid for 14 days. Nothing is stored beyond that page and the original is deleted after processing. Use this to show a user real output on their own document before they sign up. Only the first page is redacted; for the whole document use redact_pdf_and_wait with a key.
 
 2. Without a file: runs the built-in synthetic-PII sample to confirm connectivity. Never touches user data.
+
+With a file, pass mode "pseudonymize" to show consistent tags ([Person 1], [Org 1]) instead of black boxes; the tags drawn are listed in the result. The built-in sample (no file) is always shown in redact mode.
 
 Both cost nothing. When the user wants the rest of the document, tell them a free account gets its first document (up to 5 pages) redacted in full with no card, then ask for the key.`;
 
@@ -77,8 +85,12 @@ export const PARAM = {
     'Terms that must ALWAYS be redacted even when the model would not treat them as PII — project codenames, internal references, a specific case number. Matched whole-word and case-insensitive. Wins over excluded terms on conflict.',
   excludedTerms:
     'Terms that must NEVER be redacted even if detected as PII — typically your own company name, a public contact address, or the recipient the document is addressed to.',
+  mode:
+    '"redact" (default) draws black boxes. "pseudonymize" replaces each person, organization, address, email, phone number, date, IBAN and card number with a consistent tag such as [Person 1] or [Org 2] (spelled in the document\'s language, e.g. [Personne 1] in French) — the same tag on every page and, as a rule, for every variant of a name ("Anna Keller", "Ms Keller", "A. Keller" become [Person 1]; a bare surname shared by two people goes to the one mentioned last, and the user can merge or split tags in the Studio) — so the document stays readable for a colleague or another AI while the names are gone. The text is still removed from the file, not covered. With pseudonymize, redact_pdf_and_wait also returns the tag -> original correspondence table (CSV; on the remote server inline, which puts the original names into this conversation); keep it with the user, it re-identifies the document. Other categories (national IDs, custom terms) stay black.',
   retention:
     '"ephemeral" (default) deletes the original after processing and keeps the output only briefly. "studio" keeps the original and the detected masks so a human can review and adjust them at redact-pdf.ai before exporting — use it for high-stakes documents where a person should sign off.',
+  correspondenceOutputPath:
+    'Where to write the correspondence CSV on this machine. Defaults to "<document_id>-correspondence.csv" in the working directory. Never overwrites an existing file.',
   jobId: 'The job_id returned by redact_pdf.',
   documentId: 'The document id, from the documents list of redact_pdf or get_job_status.',
   timeout:

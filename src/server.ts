@@ -15,7 +15,16 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { METADATA_TIMEOUT_MS, RedactPdfClient, withoutEmptyRules } from './client.js';
-import { ACCOUNT_STATUS, DOWNLOAD, JOB_STATUS, PARAM, REDACT_ASYNC, REDACT_AND_WAIT, TRY_DEMO } from './descriptions.js';
+import {
+  ACCOUNT_STATUS,
+  DOWNLOAD,
+  DOWNLOAD_CORRESPONDENCE,
+  JOB_STATUS,
+  PARAM,
+  REDACT_ASYNC,
+  REDACT_AND_WAIT,
+  TRY_DEMO,
+} from './descriptions.js';
 import { RedactPdfError, SIGN_UP_URL } from './errors.js';
 import { logToolCall } from './observability.js';
 import { fileFromBase64, fileFromPath, fileFromUrl } from './inputs.js';
@@ -25,8 +34,10 @@ import {
   MAX_IMAGE_BYTES,
   MAX_PDF_BYTES,
   PII_CATEGORIES,
+  REDACTION_MODES,
   type InputFile,
   type Job,
+  type RedactionMode,
   type RedactionRules,
 } from './types.js';
 
@@ -87,6 +98,7 @@ const piiRuleShape = {
   pii_categories: z.array(z.enum(PII_CATEGORIES)).min(1).optional().describe(PARAM.piiCategories),
   pii_included_terms: z.array(z.string()).optional().describe(PARAM.includedTerms),
   pii_excluded_terms: z.array(z.string()).optional().describe(PARAM.excludedTerms),
+  mode: z.enum(REDACTION_MODES).optional().describe(PARAM.mode),
 };
 
 /** Job-level arguments that only apply to billed jobs. */
@@ -101,6 +113,7 @@ type RuleArgs = {
   pii_included_terms?: string[];
   pii_excluded_terms?: string[];
   retention?: 'ephemeral' | 'studio';
+  mode?: RedactionMode;
   idempotency_key?: string;
 };
 
@@ -118,7 +131,60 @@ function rulesFrom(args: RuleArgs): RedactionRules {
     ...(args.pii_included_terms ? { pii_included_terms: args.pii_included_terms } : {}),
     ...(args.pii_excluded_terms ? { pii_excluded_terms: args.pii_excluded_terms } : {}),
     ...(args.retention ? { retention: args.retention } : {}),
+    ...(args.mode ? { mode: args.mode } : {}),
   });
+}
+
+/** The correspondence file next to the redacted PDF: `x-redacted.pdf` -> `x-correspondence.csv`. */
+export function correspondencePath(outputPath: string): string {
+  const ext = extname(outputPath);
+  const stem = basename(outputPath, ext).replace(/-redacted$/, '');
+  return join(dirname(outputPath), `${stem}-correspondence.csv`);
+}
+
+/**
+ * The tag -> original table of a pseudonymized document, best effort.
+ *
+ * The PDF is already written (and billed) when this runs, so a failure here
+ * must not turn the call into an error: the agent would re-run a finished job.
+ * It is reported next to the result instead, with how to fetch the table later.
+ */
+async function fetchCorrespondence(
+  client: RedactPdfClient,
+  documentId: string,
+): Promise<{ csv: string } | { error: string }> {
+  try {
+    return { csv: await client.downloadCorrespondence(documentId) };
+  } catch (error) {
+    return { error: correspondenceFailure(client, documentId, error) };
+  }
+}
+
+/** stdio: fetch the table and write it next to the PDF, never over an existing file. */
+async function writeCorrespondence(
+  client: RedactPdfClient,
+  documentId: string,
+  path: string,
+): Promise<{ correspondence_path: string } | { correspondence_error: string }> {
+  const fetched = await fetchCorrespondence(client, documentId);
+  if ('error' in fetched) return { correspondence_error: fetched.error };
+  try {
+    // With a BOM, as the API serves it, so Excel opens accented names right.
+    await writeOutput(path, new TextEncoder().encode(`\uFEFF${fetched.csv}`));
+    return { correspondence_path: path };
+  } catch (error) {
+    return { correspondence_error: correspondenceFailure(client, documentId, error) };
+  }
+}
+
+function correspondenceFailure(client: RedactPdfClient, documentId: string, error: unknown): string {
+  const message =
+    error instanceof RedactPdfError ? error.toAgentMessage() : error instanceof Error ? error.message : String(error);
+  // A 409/422 says what the user must do first; fetching again would only
+  // repeat it, so the "get it later" hint is for transient failures only.
+  const settled = error instanceof RedactPdfError && (error.code === 'conflict' || error.code === 'invalid_request');
+  const later = settled ? '' : ` Get it later with the download_correspondence tool (document_id "${documentId}").`;
+  return `The redacted PDF is ready, but the correspondence table could not be saved: ${message}${later} Do not redact again.`;
 }
 
 /** Source arguments differ by transport — see the note in inputs.ts. */
@@ -169,6 +235,9 @@ type SourceArgs = {
 function hasSource(args: SourceArgs): boolean {
   return Boolean(args.file_path || args.file_url || args.file_base64);
 }
+
+const PSEUDONYMIZED_NOTE =
+  'Each entity was replaced by a consistent tag such as [Person 1]; the original text was removed from the file, not covered. The correspondence table maps every tag back to the original and re-identifies the document: keep it with the user and never share it alongside the redacted PDF.';
 
 /** The one sentence that turns "get a key" into "it costs nothing to try". */
 export const FREE_FIRST_DOCUMENT_NOTE =
@@ -452,6 +521,7 @@ function summariseJob(job: Job) {
     job_id: job.job_id,
     status: job.status,
     retention: job.retention,
+    mode: job.mode ?? 'redact',
     created_at: job.created_at,
     documents: job.documents.map((doc) => ({
       document_id: doc.id,
@@ -554,6 +624,12 @@ export function createServer(options: CreateServerOptions): McpServer {
           );
         }
 
+        // The server's record of the job decides, not the argument: a replayed
+        // idempotency key returns the job as it was first created, and a
+        // server that predates modes (no `mode` field) ignored the argument
+        // and drew black boxes.
+        const pseudonymized = (finished.mode ?? 'redact') === 'pseudonymize';
+
         // From here the output exists, so a failure IS resumable by downloading
         // it — tag with the document id so resume_with says so.
         const bytes = await withDocumentContext(finished.job_id, document.id, () =>
@@ -569,22 +645,36 @@ export function createServer(options: CreateServerOptions): McpServer {
           await withDocumentContext(finished.job_id, document.id, () =>
             writeOutput(outputPath, bytes),
           );
+          const correspondence = pseudonymized
+            ? await writeCorrespondence(client, document.id, correspondencePath(outputPath))
+            : {};
           return jsonResult({
             status: 'redacted',
+            mode: pseudonymized ? 'pseudonymize' : 'redact',
             output_path: outputPath,
+            ...correspondence,
             pages_redacted: document.page_count,
             job_id: finished.job_id,
             document_id: document.id,
-            note: 'The PII text was removed from the file, not covered — it cannot be recovered from the output. The original file was not modified.',
+            note: pseudonymized
+              ? `${PSEUDONYMIZED_NOTE} The original file was not modified.`
+              : 'The PII text was removed from the file, not covered — it cannot be recovered from the output. The original file was not modified.',
           });
         }
 
+        const correspondence = pseudonymized ? await fetchCorrespondence(client, document.id) : null;
         return jsonResult({
           status: 'redacted',
+          mode: pseudonymized ? 'pseudonymize' : 'redact',
           pages_redacted: document.page_count,
           job_id: finished.job_id,
           document_id: document.id,
           ...downloadPayload(client.baseUrl, document.id, bytes, maxInlineBytes),
+          ...(correspondence === null
+            ? {}
+            : 'csv' in correspondence
+              ? { correspondence_csv: correspondence.csv, note: PSEUDONYMIZED_NOTE }
+              : { correspondence_error: correspondence.error }),
         });
       });
     }),
@@ -672,6 +762,39 @@ export function createServer(options: CreateServerOptions): McpServer {
     }),
   );
 
+  // ---- 4b. Correspondence table of a pseudonymized document. ----------------
+  // redact_pdf_and_wait fetches it itself; this is how the async flow
+  // (redact_pdf -> get_job_status -> download_redacted) and a failed fetch get it.
+  server.registerTool(
+    'download_correspondence',
+    {
+      title: 'Download the tag -> original table of a pseudonymized document',
+      description: DOWNLOAD_CORRESPONDENCE,
+      inputSchema: {
+        document_id: z.string().min(1).describe(PARAM.documentId),
+        ...(mode === 'stdio'
+          ? { output_path: z.string().optional().describe(PARAM.correspondenceOutputPath) }
+          : {}),
+      },
+      annotations:
+        mode === 'stdio'
+          ? { readOnlyHint: false, destructiveHint: true, openWorldHint: true }
+          : { readOnlyHint: true, openWorldHint: true },
+    },
+    guard('download_correspondence', async (args: { document_id: string; output_path?: string }) => {
+      const csv = await client.downloadCorrespondence(args.document_id);
+      if (mode === 'stdio') {
+        const outputPath = args.output_path
+          ? resolveOutputPath(args.output_path)
+          : resolve(process.cwd(), `${args.document_id}-correspondence.csv`);
+        // With a BOM, as the API serves it, so Excel opens accented names right.
+        await writeOutput(outputPath, new TextEncoder().encode(`\uFEFF${csv}`));
+        return jsonResult({ status: 'downloaded', output_path: outputPath, note: PSEUDONYMIZED_NOTE });
+      }
+      return jsonResult({ status: 'downloaded', correspondence_csv: csv, note: PSEUDONYMIZED_NOTE });
+    }),
+  );
+
   // ---- 5. Keyless demo. ----------------------------------------------------
   // Every source argument is optional here: with none, the built-in sample
   // runs. All four keys are declared on EVERY transport on purpose: the SDK
@@ -729,6 +852,9 @@ export function createServer(options: CreateServerOptions): McpServer {
         total_pages: demo.total_pages,
         redacted_pages: demo.redacted_pages,
         detected_and_removed: demo.detected_pii,
+        // `mode` above is which demo ran; this is how the page was redacted.
+        redaction_mode: demo.mode ?? 'redact',
+        ...(demo.tags ? { tags: demo.tags } : {}),
         redacted_first_page_pdf: demo.redacted_first_page_url,
         link_expires_in_days: demo.link_expires_in_days,
         api_key_configured: client.hasApiKey,
