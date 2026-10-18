@@ -165,6 +165,18 @@ Get an API key at [redact-pdf.ai/sign-up](https://www.redact-pdf.ai/sign-up). A 
 gets its first document (up to 5 pages) redacted in full, no card. Without a key,
 `try_demo` still works; everything else will tell the agent to ask you for one.
 
+A client that can't pass the key in the environment (Cowork drops a plugin MCP server whose
+config references a plugin setting, so the Claude plugin passes none) can save it instead: give the agent the key and it calls `set_api_key`, which
+checks the key against the API and, when the client supports MCP elicitation, asks you to
+approve the account (email and the key's last four characters). A confirmed key is written to
+`~/.config/redact-pdf-mcp/key` (or `$XDG_CONFIG_HOME/redact-pdf-mcp/key`), readable by your user
+only, and is never replaced without the same confirmation. A client without elicitation gets the
+key for that session only, in memory, never over a key that still works, and every tool result
+names the account. That keeps a key planted in a processed document from silently redirecting
+your files. The tool never returns the key. You can also write the file yourself once (see the
+plugin README for the one-line command). `REDACT_PDF_API_KEY` takes priority when it is set; an
+empty value, or an unsubstituted placeholder such as `${user_config.api_key}`, counts as unset.
+
 ## Tools
 
 | Tool | What it does |
@@ -177,6 +189,7 @@ gets its first document (up to 5 pages) redacted in full, no card. Without a key
 | `try_demo` | Keyless. With a file: redact its first page for real. Without: run the built-in sample. |
 | `restore_names` | **Local only.** Put the real names back into a `.md`, `.txt` or `.docx` the agent wrote from the pseudonymized text. Returns the output path and counts, never a name. |
 | `get_account_status` | Check the API key is valid and see the account, before a big batch. |
+| `set_api_key` | **Local only.** Check a key the user gives in the conversation and save it user-only on this machine, for clients that can't pass `REDACT_PDF_API_KEY`. Never returns the key. |
 
 Redaction rules, on either redact tool:
 
@@ -247,7 +260,7 @@ privilege you do not already have.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `REDACT_PDF_API_KEY` | — | API key (stdio mode only; remote takes it per request). |
+| `REDACT_PDF_API_KEY` | — | API key (stdio mode only; remote takes it per request). Empty or `${...}` counts as unset, and the key saved by `set_api_key` is used instead. |
 | `REDACT_PDF_BASE_URL` | `https://www.redact-pdf.ai` | Point at a different API host. |
 | `PORT` | `8080` | HTTP server port. |
 | `REDACT_PDF_MCP_PATH` | `/mcp` | HTTP endpoint path. |
@@ -258,8 +271,8 @@ privilege you do not already have.
 
 - **No telemetry.** The server makes exactly the API calls its tools describe, and nothing
   else. No analytics, no error reporting, no phone-home.
-- **Stateless.** No database, no cache, no disk writes except the redacted PDF you asked
-  for, at the path you asked for.
+- **Stateless.** No database, no cache, no disk writes except the files you asked for, at
+  the paths you asked for, and the key file when you call `set_api_key`.
 - **Your originals stay yours.** In stdio mode the input file is read and never modified.
   Under the default `ephemeral` retention the API deletes the original after processing.
 - **Idempotent by default.** The idempotency key is derived from the file bytes and the

@@ -26,7 +26,7 @@ The result gives you:
 - `output_path`: the pseudonymized PDF.
 - `correspondence_path`: the tag → original table. **Never open, read or quote it.** It is the one file that re-identifies the document.
 
-If there is no API key, call `try_demo` with the same `file_path`. It does the first page for free. Then tell the user a free account gets its first document (up to 5 pages) done in full.
+If there is no API key, call `try_demo` with the same `file_path`. It does the first page for free. Then tell the user a free account gets its first document (up to 5 pages) done in full. If the user then gives you a key in the conversation, call `set_api_key` with it once and carry on; don't repeat the key back.
 
 ## 3. Do the work on the tags
 

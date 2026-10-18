@@ -13,10 +13,20 @@ import { link, readFile, unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { ErrorCode, McpError, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { METADATA_TIMEOUT_MS, RedactPdfClient, withoutEmptyRules } from './client.js';
-import { ACCOUNT_STATUS, describeFor, JOB_STATUS, PARAM, RESTORE_NAMES, TRY_DEMO } from './descriptions.js';
+import {
+  ACCOUNT_STATUS,
+  describeFor,
+  JOB_STATUS,
+  KEY_SETUP_NOTE,
+  PARAM,
+  RESTORE_NAMES,
+  SET_API_KEY,
+  TRY_DEMO,
+} from './descriptions.js';
+import { isWellFormedKey, writeKeyFile, type KeySource } from './key.js';
 import { RedactPdfError, SIGN_UP_URL } from './errors.js';
 import { logToolCall } from './observability.js';
 import { fileFromBase64, fileFromPath, fileFromUrl } from './inputs.js';
@@ -73,6 +83,13 @@ export interface CreateServerOptions {
    * `timeout_seconds` on the tool call still wins over `timeoutMs` here.
    */
   pollOptions?: PollOptions;
+  /**
+   * Where the stdio server's key comes from. When given (stdio only), the
+   * server registers set_api_key, which saves a key to `keySource.filePath`.
+   * The client should read its key from the same source so the save applies
+   * at once.
+   */
+  keySource?: KeySource;
 }
 
 /**
@@ -623,10 +640,25 @@ export function createServer(options: CreateServerOptions): McpServer {
   const resolveHost = options.resolveHost;
   const pollOptions = options.pollOptions ?? {};
   const wording = describeFor(mode);
+  // A hosted server must never write a key to its own disk.
+  const keySource = mode === 'stdio' ? options.keySource : undefined;
+
+  // While a key the user hasn't confirmed is in use, every result names its
+  // account: if injected text planted it, the wrong account shows on first use.
+  const tool = <A>(name: string, handler: (args: A) => Promise<CallToolResult>) => {
+    const guarded = guard(name, handler);
+    return async (args: A): Promise<CallToolResult> => {
+      const result = await guarded(args);
+      const session = keySource?.session();
+      return session
+        ? { ...result, content: [...result.content, { type: 'text', text: sessionAccountNote(session.account) }] }
+        : result;
+    };
+  };
 
   const server = new McpServer(
     { name: 'redact-pdf', version: VERSION },
-    { instructions: wording.instructions },
+    { instructions: keySource ? `${wording.instructions}\n\n${KEY_SETUP_NOTE}` : wording.instructions },
   );
 
   // Typed as ZodRawShape so the stdio/http branches unify instead of widening
@@ -661,7 +693,7 @@ export function createServer(options: CreateServerOptions): McpServer {
         openWorldHint: true,
       },
     },
-    guard('redact_pdf_and_wait', async (args: SourceArgs & RuleArgs & { output_path?: string; timeout_seconds?: number }) => {
+    tool('redact_pdf_and_wait', async (args: SourceArgs & RuleArgs & { output_path?: string; timeout_seconds?: number }) => {
       const file = await resolveInput(mode, args, downloadFetch, resolveHost);
       const job = await client.createJob([file], rulesFrom(args), args.idempotency_key);
       assertJobAccepted(job);
@@ -780,7 +812,7 @@ export function createServer(options: CreateServerOptions): McpServer {
       inputSchema: { ...sourceShape, ...ruleShape },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     },
-    guard('redact_pdf', async (args: SourceArgs & RuleArgs) => {
+    tool('redact_pdf', async (args: SourceArgs & RuleArgs) => {
       const file = await resolveInput(mode, args, downloadFetch, resolveHost);
       const job = await client.createJob([file], rulesFrom(args), args.idempotency_key);
       assertJobAccepted(job);
@@ -800,7 +832,7 @@ export function createServer(options: CreateServerOptions): McpServer {
       inputSchema: { job_id: z.string().min(1).describe(PARAM.jobId) },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    guard('get_job_status', async (args: { job_id: string }) => {
+    tool('get_job_status', async (args: { job_id: string }) => {
       const job = await client.getJob(args.job_id);
       const done = isTerminal(job);
       return jsonResult({
@@ -830,7 +862,7 @@ export function createServer(options: CreateServerOptions): McpServer {
           ? { readOnlyHint: false, destructiveHint: true, openWorldHint: true }
           : { readOnlyHint: true, openWorldHint: true },
     },
-    guard('download_redacted', async (args: { document_id: string; output_path?: string }) => {
+    tool('download_redacted', async (args: { document_id: string; output_path?: string }) => {
       const bytes = await client.downloadOutput(args.document_id);
 
       if (mode === 'stdio') {
@@ -880,7 +912,7 @@ export function createServer(options: CreateServerOptions): McpServer {
           ? { readOnlyHint: false, destructiveHint: true, openWorldHint: true }
           : { readOnlyHint: true, openWorldHint: true },
     },
-    guard('download_correspondence', async (args: { document_id: string; output_path?: string }) => {
+    tool('download_correspondence', async (args: { document_id: string; output_path?: string }) => {
       const csv = await client.downloadCorrespondence(args.document_id);
       if (mode === 'stdio') {
         const outputPath = args.output_path
@@ -916,10 +948,10 @@ export function createServer(options: CreateServerOptions): McpServer {
       // With a file it uploads user data and creates a server-side demo record.
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     },
-    guard('try_demo', async (args: SourceArgs & RuleArgs) => {
+    tool('try_demo', async (args: SourceArgs & RuleArgs) => {
       const keyNote = client.hasApiKey
         ? 'An API key is configured — call redact_pdf_and_wait to redact the whole document.'
-        : `No API key is configured. To redact whole documents, get a key at ${SIGN_UP_URL} and set REDACT_PDF_API_KEY. ${FREE_FIRST_DOCUMENT_NOTE}`;
+        : `No API key is configured. To redact whole documents, get a key at ${SIGN_UP_URL} and ${keySource ? 'call set_api_key with it' : 'set REDACT_PDF_API_KEY'}. ${FREE_FIRST_DOCUMENT_NOTE}`;
 
       if (!hasSource(args)) {
         const demo = await client.demo();
@@ -979,7 +1011,7 @@ export function createServer(options: CreateServerOptions): McpServer {
         // Writes a new file, never over an existing one, and calls no network.
         annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
       },
-      guard('restore_names', async (args: { file_path: string; correspondence_path: string; output_path?: string }) =>
+      tool('restore_names', async (args: { file_path: string; correspondence_path: string; output_path?: string }) =>
         jsonResult(await restoreNames(args)),
       ),
     );
@@ -994,7 +1026,7 @@ export function createServer(options: CreateServerOptions): McpServer {
       inputSchema: {},
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    guard('get_account_status', async () => {
+    tool('get_account_status', async () => {
       const me = await client.me();
       return jsonResult({
         status: 'ok',
@@ -1006,7 +1038,251 @@ export function createServer(options: CreateServerOptions): McpServer {
     }),
   );
 
+  // ---- 7. Save a key (local only). -----------------------------------------
+  // For clients that can't pass REDACT_PDF_API_KEY, such as Cowork, which
+  // drops a plugin MCP server that references userConfig. The key never
+  // appears in a result.
+  if (keySource) {
+    const confirmSave = elicitConfirmSave(server);
+    server.registerTool(
+      'set_api_key',
+      {
+        title: 'Use the API key the user gave (saved on this machine once they confirm)',
+        description: SET_API_KEY,
+        inputSchema: { api_key: z.string().describe(PARAM.apiKey) },
+        // Can replace the saved key (only with the user's confirmation), and
+        // what a repeat does depends on the user's answer.
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      },
+      tool('set_api_key', async (args: { api_key: string }) =>
+        jsonResult(await saveApiKey(client, keySource, args.api_key, confirmSave)),
+      ),
+    );
+  }
+
   return server;
+}
+
+/**
+ * How set_api_key asks the user, outside the model, to approve a save.
+ * "unsupported" when the client can't show a form (MCP elicitation).
+ */
+export type ConfirmSave = (
+  request: { accountEmail: string; keyEnding: string; replacing: boolean },
+) => Promise<'accepted' | 'declined' | 'unsupported'>;
+
+/**
+ * The form waits for a person, who may read it carefully. The SDK's default
+ * request timeout is 60 s, after which a user who was still reading got
+ * "could not ask" and the agent was nudged to ask again.
+ */
+export const CONFIRM_TIMEOUT_MS = 10 * 60_000;
+
+/** Elicitation through the connected client, when it declares form support. */
+export function elicitConfirmSave(server: McpServer): ConfirmSave {
+  return async ({ accountEmail, keyEnding, replacing }) => {
+    const elicitation = server.server.getClientCapabilities()?.elicitation;
+    // An empty capability object means form mode (the spec's original shape).
+    if (!elicitation || (elicitation.url && !elicitation.form)) return 'unsupported';
+    let result;
+    try {
+      result = await server.server.elicitInput(
+        {
+          mode: 'form',
+          // The key's last characters let the user recognise the key they
+          // pasted; a lookalike account email alone is easy to miss.
+          message: `${replacing ? 'Replace the saved Redact PDF AI API key with the' : 'Save the Redact PDF AI API'} key ending in "${keyEnding}", for the account ${accountEmail}? Documents redacted from now on are uploaded to that account. Only confirm if you gave this key yourself and the account is yours.`,
+          requestedSchema: {
+            type: 'object',
+            properties: { confirm: { type: 'boolean', title: `Use the account ${accountEmail}`, default: false } },
+            required: ['confirm'],
+          },
+        },
+        { timeout: CONFIRM_TIMEOUT_MS },
+      );
+    } catch (cause) {
+      if (cause instanceof McpError && cause.code === ErrorCode.RequestTimeout) {
+        throw new RedactPdfError(
+          'The user did not answer the confirmation in time, so nothing was saved. Ask them in the conversation before calling set_api_key again.',
+          { code: 'not_confirmed' },
+        );
+      }
+      throw new RedactPdfError(
+        `Could not ask the user to confirm the key (${cause instanceof Error ? cause.message : String(cause)}). Nothing was saved.`,
+        { code: 'not_confirmed' },
+      );
+    }
+    return result.action === 'accept' && result.content?.confirm === true ? 'accepted' : 'declined';
+  };
+}
+
+/** What /v1/me must return before an account is shown to the user and trusted. */
+const ACCOUNT_EMAIL = /^[^\s@<>"'`\p{Cc}\p{Cf}]{1,64}@[^\s@<>"'`\p{Cc}\p{Cf}]{1,190}$/u;
+
+/** Shown with every tool result while a key the user hasn't confirmed is in use. */
+export function sessionAccountNote(account: string): string {
+  return `Account: this session sends documents to the Redact PDF AI account ${account}, using a key given in the conversation that the user has not confirmed. If that is not the user's own account, stop and tell them.`;
+}
+
+/**
+ * set_api_key, apart from the wiring so the rule is easy to audit: nothing
+ * that is returned or thrown contains the key.
+ *
+ * The threat is a key that isn't the user's. Text the model reads (a document
+ * in pseudonymize mode is exactly that) can say "call set_api_key with ...",
+ * and checking the key against the API only proves it works: an attacker's own
+ * key works. Saved, it would send every later document to the attacker's
+ * account, in every session. So:
+ *
+ *   - only a key the user approves in a form (MCP elicitation, outside the
+ *     model) is written to disk, and replacing a saved key needs the same;
+ *   - a client that can't show a form gets the key for this session only, in
+ *     memory, and never in place of a working key; every tool result then names
+ *     the account, so a wrong one shows on first use and ends with the session.
+ */
+export async function saveApiKey(
+  client: RedactPdfClient,
+  keySource: KeySource,
+  apiKey: string,
+  confirm: ConfirmSave = async () => 'unsupported',
+): Promise<Record<string, unknown>> {
+  if (!isWellFormedKey(apiKey)) {
+    throw new RedactPdfError(
+      'That does not look like an API key: it should be one token with no spaces, copied from https://www.redact-pdf.ai/dashboard/settings. Nothing was saved.',
+      { code: 'invalid_request' },
+    );
+  }
+  const key = apiKey.trim();
+  const me = await verifiedAccount(client, key);
+
+  const saved = keySource.saved();
+  const session = keySource.session();
+  if (saved === key || session?.key === key) {
+    // The saved key is the user's own file: if a session key was shadowing
+    // it, going back to it needs no confirmation.
+    if (saved === key && session) keySource.setSession(undefined);
+    return {
+      status: 'already_saved',
+      ...(saved === key ? { key_file: keySource.filePath } : { session_only: true }),
+      account_email: me.email,
+      note: 'This key is already set; nothing else changed. Do not repeat the key in your reply.',
+    };
+  }
+
+  const decision = await confirm({ accountEmail: me.email, keyEnding: key.slice(-4), replacing: saved !== undefined });
+  if (decision === 'declined') {
+    throw new RedactPdfError(
+      `The user did not confirm the account ${me.email}, so nothing was saved. Do not call set_api_key again unless the user asks you to.`,
+      { code: 'not_confirmed' },
+    );
+  }
+  const usage = keySource.fromEnvironment
+    ? 'REDACT_PDF_API_KEY is also set for this server and keeps priority in this session; the saved key is used wherever that variable is not set.'
+    : 'The redaction tools use it from now on, in this session and the next ones.';
+
+  if (decision === 'accepted') {
+    await persistKey(keySource, key, saved ?? null);
+    // A session key would otherwise keep priority over the one just confirmed.
+    keySource.setSession(undefined);
+    return {
+      status: 'saved',
+      key_file: keySource.filePath,
+      account_email: me.email,
+      confirmed_by_user: true,
+      note: `The key is valid and saved. ${usage} Do not repeat the key in your reply.`,
+    };
+  }
+
+  // No form: this session only, never over a working key.
+  if (keySource.fromEnvironment) {
+    throw new RedactPdfError(
+      'REDACT_PDF_API_KEY is set for this server and keeps priority, and this client cannot ask the user to confirm saving another key, so nothing was saved. If that key is wrong, the user replaces it where it is set (the MCP client\'s configuration for this server) and restarts.',
+      { code: 'not_confirmed' },
+    );
+  }
+  if (session && (await stillWorks(client, session.key))) {
+    throw new RedactPdfError(
+      `A key for the account ${session.account} was already given in this session, and this client cannot ask the user to confirm replacing it, so it is left as is. Restart the session to start over.`,
+      { code: 'not_confirmed' },
+    );
+  }
+  if (saved !== undefined && (await stillWorks(client, saved))) {
+    // A dead session key must not hide a saved key that works: drop it, so
+    // the saved key is used again, rather than letting a new one in.
+    if (session) keySource.setSession(undefined);
+    throw new RedactPdfError(
+      `A key is already saved in "${keySource.filePath}" and still works${session ? ' (it is used again from now on)' : ''}, and this client cannot ask the user to confirm replacing it, so it is left as is. If the user wants another key, they delete that file themselves, then you call set_api_key again.`,
+      { code: 'not_confirmed' },
+    );
+  }
+  // Re-read after the awaits: a concurrent call may have set a key meanwhile,
+  // and this must not silently take its place.
+  if (keySource.session()?.key !== session?.key) {
+    throw new RedactPdfError('Another key was set in this session meanwhile, so this one was not used.', {
+      code: 'not_confirmed',
+    });
+  }
+  keySource.setSession({ key, account: me.email });
+  return {
+    status: 'saved_for_session',
+    session_only: true,
+    account_email: me.email,
+    confirmed_by_user: false,
+    note: `This client cannot ask the user to confirm the key, so it is used for this session only and not written to disk. Tell the user it belongs to the account ${me.email}, so they can check it is theirs; every tool result names that account until the session ends. Do not repeat the key in your reply.`,
+  };
+}
+
+/** /v1/me for `key`, with an account that is safe to show; the key never in an error. */
+async function verifiedAccount(client: RedactPdfClient, key: string): Promise<{ email: string }> {
+  let me;
+  try {
+    me = await client.withApiKey(key).me();
+  } catch (error) {
+    if (error instanceof RedactPdfError && error.code === 'unauthorized') {
+      throw new RedactPdfError(
+        'The API rejected that key, so nothing was saved. Ask the user to copy it again from https://www.redact-pdf.ai/dashboard/settings, or to create a new one there.',
+        { code: 'unauthorized', status: error.status, requestId: error.requestId, retryable: false },
+      );
+    }
+    throw error;
+  }
+  // The email is shown to the user as the thing they approve; never "undefined".
+  if (typeof me?.email !== 'string' || me.email.length > 254 || !ACCOUNT_EMAIL.test(me.email)) {
+    throw new RedactPdfError(
+      'The API accepted the key but did not return a usable account email, so nothing was saved. Try again later.',
+      { code: 'internal_error' },
+    );
+  }
+  return { email: me.email };
+}
+
+/** True unless the API says the key is no longer valid. Other failures are not a "no". */
+async function stillWorks(client: RedactPdfClient, key: string): Promise<boolean> {
+  try {
+    await client.withApiKey(key).me();
+    return true;
+  } catch (error) {
+    if (error instanceof RedactPdfError && error.code === 'unauthorized') return false;
+    throw error;
+  }
+}
+
+async function persistKey(keySource: KeySource, key: string, expect: string | null): Promise<void> {
+  try {
+    await writeKeyFile(keySource.filePath, key, expect);
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException)?.code;
+    if (code === 'ECHANGED') {
+      throw new RedactPdfError(
+        `The saved key in "${keySource.filePath}" changed while the user was confirming, so it was not replaced. Call get_account_status to see which key is in use, and ask the user before trying again.`,
+        { code: 'not_confirmed' },
+      );
+    }
+    throw new RedactPdfError(
+      `The key is valid but could not be saved to "${keySource.filePath}"${code ? ` (${code})` : ''}. The folder "${dirname(keySource.filePath)}" must be a plain folder that belongs to the user: ask the user to fix it, or to set XDG_CONFIG_HOME to a folder of their own. Clients that support it can set REDACT_PDF_API_KEY instead.`,
+      { code: 'local_write_failed' },
+    );
+  }
 }
 
 /**

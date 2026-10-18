@@ -2,10 +2,7 @@
   "mcpServers": {
     "redact-pdf": {
       "command": "npx",
-      "args": ["-y", "redact-pdf-mcp@0.4.0"],
-      "env": {
-        "REDACT_PDF_API_KEY": "${user_config.api_key}"
-      }
+      "args": ["-y", "redact-pdf-mcp@0.4.1"]
     }
   }
 }

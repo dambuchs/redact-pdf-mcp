@@ -233,6 +233,41 @@ describe('error mapping', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('reads a function key on every request, and treats an empty one as missing', async () => {
+    let key: string | undefined = '';
+    const fetchImpl = fetchMock(async () => jsonResponse({ user_id: 'u', email: 'e' }));
+    const client = new RedactPdfClient({ apiKey: () => key, fetchImpl: fetchImpl as unknown as typeof fetch, sleep: noSleep });
+    expect(client.hasApiKey).toBe(false);
+    await expect(client.me()).rejects.toMatchObject({ code: 'unauthorized' });
+    key = 'rpk_later';
+    expect(client.hasApiKey).toBe(true);
+    await client.me();
+    expect(new Headers(callAt(fetchImpl, 0)[1].headers).get('X-API-Key')).toBe('rpk_later');
+  });
+
+  it('uses keyHelp in place of the env-var advice, for a missing key and for a 401', async () => {
+    const fetchImpl = fetchMock(async () => errorResponse(401, 'unauthorized'));
+    const keyHelp = 'Call set_api_key.';
+    const keyless = new RedactPdfClient({ keyHelp, fetchImpl: fetchImpl as unknown as typeof fetch, sleep: noSleep });
+    const missing = await rejection(keyless.me());
+    expect(missing.message).toContain(keyHelp);
+    expect(missing.message).not.toMatch(/REDACT_PDF_API_KEY/);
+    const rejected = await rejection(keyless.withApiKey('rpk_bad').me());
+    expect(rejected.code).toBe('unauthorized');
+    expect(rejected.message).toContain(keyHelp);
+    expect(rejected.message).not.toMatch(/REDACT_PDF_API_KEY/);
+  });
+
+  it('withApiKey keeps the server and transport', async () => {
+    const fetchImpl = fetchMock(async () => jsonResponse({ user_id: 'u', email: 'e' }));
+    const client = new RedactPdfClient({ baseUrl: 'https://api.test/', fetchImpl: fetchImpl as unknown as typeof fetch, sleep: noSleep });
+    await client.withApiKey('rpk_other').me();
+    const [url, init] = callAt(fetchImpl, 0);
+    expect(url).toBe('https://api.test/v1/me');
+    expect(new Headers(init.headers).get('X-API-Key')).toBe('rpk_other');
+    expect(client.hasApiKey).toBe(false);
+  });
+
   it('allows the keyless demo with no API key', async () => {
     const fetchImpl = fetchMock(async () => jsonResponse({ status: 'ok', message: 'hi' }));
     const client = new RedactPdfClient({ fetchImpl: fetchImpl as unknown as typeof fetch, sleep: noSleep });

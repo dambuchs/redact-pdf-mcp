@@ -17,7 +17,7 @@ Narrow it only when the user asks to:
 
 For a folder, start one `redact_pdf` job per file, then collect each with `get_job_status` and `download_redacted`. Don't upload the same file twice. If a call times out, the job keeps running: poll `get_job_status` with the `job_id`.
 
-If there is no API key, call `try_demo` with the same `file_path` to redact the first page for free, then tell the user a free account gets its first document (up to 5 pages) done in full.
+If there is no API key, call `try_demo` with the same `file_path` to redact the first page for free, then tell the user a free account gets its first document (up to 5 pages) done in full. If the user then gives you a key in the conversation, call `set_api_key` with it once and carry on; don't repeat the key back.
 
 ## 2. Report back
 

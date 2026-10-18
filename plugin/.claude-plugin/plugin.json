@@ -1,7 +1,7 @@
 {
   "name": "redact-pdf-ai",
   "displayName": "Redact PDF AI",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Redact or anonymize PDFs, scans and screenshots on your machine before an AI or anyone else sees them. Black boxes, or consistent [Person 1] tags that keep the document readable, with the real names put back locally afterwards.",
   "author": { "name": "Redact PDF AI", "email": "info@redact-pdf.ai", "url": "https://www.redact-pdf.ai" },
   "homepage": "https://www.redact-pdf.ai/developers",
@@ -12,13 +12,5 @@
   "documentationUrl": "https://www.redact-pdf.ai/developers",
   "supportUrl": "https://github.com/dambuchs/redact-pdf-mcp/issues",
   "privacyPolicyUrl": "https://www.redact-pdf.ai/privacy",
-  "termsOfServiceUrl": "https://www.redact-pdf.ai/terms",
-  "userConfig": {
-    "api_key": {
-      "type": "string",
-      "title": "Redact PDF AI API key",
-      "description": "Create one after signing up at redact-pdf.ai/sign-up. Optional: without it only the keyless try_demo tool works, which redacts the first page of a real file. A free account gets its first document (up to 5 pages) in full, no card.",
-      "sensitive": true
-    }
-  }
+  "termsOfServiceUrl": "https://www.redact-pdf.ai/terms"
 }

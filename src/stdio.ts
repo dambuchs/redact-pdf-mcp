@@ -4,31 +4,33 @@
  *
  * This is the local mode: the process runs on the user's machine, reads their
  * PDFs off disk, and writes redacted output next to them. The API key comes
- * from the environment, which is how every MCP client passes secrets to a
- * stdio server.
+ * from the environment, which is how most MCP clients pass secrets to a stdio
+ * server, or else from the file the set_api_key tool writes (see key.ts).
  *
  * Nothing may be written to stdout except JSON-RPC frames — stdout IS the
  * transport. Diagnostics go to stderr.
  */
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { DEFAULT_BASE_URL, RedactPdfClient } from './client.js';
-import { createServer, VERSION } from './server.js';
+import { inspectKeyFile } from './key.js';
+import { createLocalServer } from './local.js';
+import { VERSION } from './server.js';
 
 async function main(): Promise<void> {
-  const apiKey = process.env.REDACT_PDF_API_KEY?.trim() || undefined;
-  const baseUrl = process.env.REDACT_PDF_BASE_URL?.trim() || DEFAULT_BASE_URL;
+  const { server, keys, baseUrl } = createLocalServer(process.env);
+
+  const keyFile = inspectKeyFile(keys.filePath);
+  if (keyFile.ignored) {
+    process.stderr.write(`[redact-pdf-mcp] Ignoring the key file ${keys.filePath}: ${keyFile.ignored}.\n`);
+  }
 
   // Not fatal: try_demo works without a key, and telling the model the key is
   // missing is more useful than refusing to start.
-  if (!apiKey) {
+  if (!keys.current()) {
     process.stderr.write(
-      '[redact-pdf-mcp] No REDACT_PDF_API_KEY set. try_demo will work (it can redact the first page of a real file); redacting whole documents will not. Get a key at https://www.redact-pdf.ai/sign-up — a free account gets its first document (up to 5 pages) redacted free, no card.\n',
+      '[redact-pdf-mcp] No API key set. try_demo will work (it can redact the first page of a real file); redacting whole documents will not until REDACT_PDF_API_KEY is set or a key is saved with set_api_key. Get a key at https://www.redact-pdf.ai/sign-up — a free account gets its first document (up to 5 pages) redacted free, no card.\n',
     );
   }
-
-  const client = new RedactPdfClient({ apiKey, baseUrl });
-  const server = createServer({ mode: 'stdio', client });
 
   await server.connect(new StdioServerTransport());
   process.stderr.write(`[redact-pdf-mcp] v${VERSION} ready on stdio (${baseUrl})\n`);

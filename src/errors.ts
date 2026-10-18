@@ -20,6 +20,10 @@ export type ApiErrorCode =
   | 'internal_error'
   | 'network_error'
   | 'timeout'
+  /** Local only: set_api_key could not write the key file. */
+  | 'local_write_failed'
+  /** Local only: the user declined, or could not be asked, to approve a key. */
+  | 'not_confirmed'
   | 'error';
 
 export const SIGN_UP_URL = 'https://www.redact-pdf.ai/sign-up';
@@ -102,7 +106,7 @@ function parseRetryAfter(headers: Headers): number | undefined {
  * Turn a non-2xx response into a `RedactPdfError` whose message tells an agent
  * what to do next. Consumes the response body.
  */
-export async function errorFromResponse(response: Response): Promise<RedactPdfError> {
+export async function errorFromResponse(response: Response, keyHelp?: string): Promise<RedactPdfError> {
   let body: ApiErrorBody = {};
   let raw = '';
   try {
@@ -120,7 +124,7 @@ export async function errorFromResponse(response: Response): Promise<RedactPdfEr
   switch (status) {
     case 401:
       return new RedactPdfError(
-        `Unauthorized: the API key is missing or invalid. Set REDACT_PDF_API_KEY to a key from ${API_KEYS_URL} (create a free account at ${SIGN_UP_URL}; the first document, up to 5 pages, is redacted free with no card). Do not retry until the key is fixed.`,
+        `Unauthorized: the API key is missing or invalid. ${keyHelp ?? `Set REDACT_PDF_API_KEY to a key from ${API_KEYS_URL} (create a free account at ${SIGN_UP_URL}; the first document, up to 5 pages, is redacted free with no card).`} Do not retry until the key is fixed.`,
         { code: 'unauthorized', status, requestId, retryable: false },
       );
     case 402:

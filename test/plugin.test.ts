@@ -21,12 +21,16 @@ describe('claude plugin', () => {
     expect(server.args).toEqual(['-y', `${pkg.name}@${pkg.version}`]);
   });
 
-  it('passes the API key only through a sensitive userConfig entry', async () => {
-    const plugin = await read('../plugin/.claude-plugin/plugin.json');
+  it('references no user_config anywhere, or Cowork drops the server', async () => {
+    // Measured 2026-10-18 in Cowork (desktop 2.42304.0): any ${user_config.*}
+    // in a plugin MCP server's config, default or not, is logged as "user_config
+    // is not supported on the desktop host bridge; dropping server". The key
+    // comes from set_api_key or the key file instead (see src/key.ts).
+    const raw = await readFile(new URL('../plugin/.mcp.json', import.meta.url), 'utf8');
+    expect(raw).not.toMatch(/user_config/);
     const mcp = await read('../plugin/.mcp.json');
-    expect(mcp.mcpServers['redact-pdf'].env).toEqual({
-      REDACT_PDF_API_KEY: '${user_config.api_key}',
-    });
-    expect(plugin.userConfig.api_key.sensitive).toBe(true);
+    expect(mcp.mcpServers['redact-pdf'].env).toBeUndefined();
+    const plugin = await read('../plugin/.claude-plugin/plugin.json');
+    expect(plugin.userConfig).toBeUndefined();
   });
 });

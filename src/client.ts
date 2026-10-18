@@ -60,7 +60,17 @@ export const MIN_RETRY_SLEEP_MS = 250;
 
 export interface ClientOptions {
   baseUrl?: string;
-  apiKey?: string;
+  /**
+   * A key, or a function read on every request. The stdio server passes a
+   * function so a key saved by set_api_key takes effect without a restart.
+   */
+  apiKey?: string | (() => string | undefined);
+  /**
+   * Replaces the default "set REDACT_PDF_API_KEY" advice in missing-key and
+   * 401 errors. The stdio server points at set_api_key, which works in clients
+   * that can't pass the environment variable.
+   */
+  keyHelp?: string;
   /** Injectable for tests. Defaults to global fetch. */
   fetchImpl?: typeof fetch;
   /** Attempts for transient failures (429 / 5xx / network). 1 = no retry. */
@@ -128,31 +138,48 @@ export function deriveIdempotencyKey(files: InputFile[], rules: RedactionRules):
 
 export class RedactPdfClient {
   readonly baseUrl: string;
-  private readonly apiKey: string | undefined;
+  private readonly apiKeyOption: string | (() => string | undefined) | undefined;
+  private readonly keyHelp: string | undefined;
   private readonly fetchImpl: typeof fetch;
   private readonly maxAttempts: number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly options: ClientOptions;
 
   constructor(options: ClientOptions = {}) {
+    this.options = options;
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
-    this.apiKey = options.apiKey;
+    this.apiKeyOption = options.apiKey;
+    this.keyHelp = options.keyHelp;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
     this.maxAttempts = options.maxAttempts ?? 3;
     this.sleep = options.sleep ?? defaultSleep;
+  }
+
+  private get apiKey(): string | undefined {
+    const option = this.apiKeyOption;
+    return typeof option === 'function' ? option() : option;
   }
 
   get hasApiKey(): boolean {
     return Boolean(this.apiKey);
   }
 
+  /** Same server and transport, another key: set_api_key checks a key with it before saving. */
+  withApiKey(apiKey: string): RedactPdfClient {
+    // Spread, not copied field by field: a later ClientOptions field would
+    // otherwise be dropped from the key check without anyone noticing.
+    return new RedactPdfClient({ ...this.options, apiKey });
+  }
+
   private requireApiKey(): string {
-    if (!this.apiKey) {
+    const apiKey = this.apiKey;
+    if (!apiKey) {
       throw new RedactPdfError(
-        'No API key configured. Set the REDACT_PDF_API_KEY environment variable to a key from https://www.redact-pdf.ai/dashboard/settings (free account: https://www.redact-pdf.ai/sign-up). The try_demo tool works without a key if you just want to check the service is reachable.',
+        `No API key configured. ${this.keyHelp ?? 'Set the REDACT_PDF_API_KEY environment variable to a key from https://www.redact-pdf.ai/dashboard/settings (free account: https://www.redact-pdf.ai/sign-up).'} The try_demo tool works without a key if you just want to check the service is reachable.`,
         { code: 'unauthorized', retryable: false },
       );
     }
-    return this.apiKey;
+    return apiKey;
   }
 
   /**
@@ -173,7 +200,19 @@ export class RedactPdfClient {
     const url = `${this.baseUrl}${path}`;
 
     const requestHeaders = new Headers(headers);
-    if (authenticated) requestHeaders.set('X-API-Key', this.requireApiKey());
+    if (authenticated) {
+      const apiKey = this.requireApiKey();
+      try {
+        requestHeaders.set('X-API-Key', apiKey);
+      } catch {
+        // Node's own message quotes the rejected value, i.e. the key, and it
+        // would reach the agent as a tool result.
+        throw new RedactPdfError(
+          'The configured API key cannot be sent: it contains a line break or another character not allowed in a header. Check REDACT_PDF_API_KEY, or the saved key file, for a second line or a stray character.',
+          { code: 'unauthorized', retryable: false },
+        );
+      }
+    }
     if (!requestHeaders.has('user-agent')) {
       requestHeaders.set('User-Agent', 'redact-pdf-mcp');
     }
@@ -210,7 +249,7 @@ export class RedactPdfClient {
 
       if (response.ok) return response;
 
-      const error = await errorFromResponse(response);
+      const error = await errorFromResponse(response, this.keyHelp);
       if (!error.retryable || attempt === maxAttempts) throw error;
       lastError = error;
 

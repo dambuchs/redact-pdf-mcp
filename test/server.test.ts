@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { callAt, fetchMock, jsonResponse, payload } from './helpers.js';
 import { METADATA_TIMEOUT_MS, RedactPdfClient } from '../src/client.js';
 import { createServer, defaultOutputPath, type ServerMode } from '../src/server.js';
+import { createLocalServer } from '../src/local.js';
 import type { Job } from '../src/types.js';
 
 const REDACTED_PDF = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]); // "%PDF-1.7"
@@ -84,7 +85,11 @@ describe('tool listing', () => {
     const manifest = JSON.parse(
       await readFile(new URL('../manifest.json', import.meta.url), 'utf8'),
     ) as { tools: { name: string }[] };
-    const { client } = await connect('stdio', fetchMock() as unknown as typeof fetch);
+    // The bundle runs stdio.js, i.e. the local server with set_api_key.
+    const { server } = createLocalServer({}, { fetchImpl: fetchMock() as unknown as typeof fetch });
+    const client = new Client({ name: 'test', version: '1.0.0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
     const { tools } = await client.listTools();
     expect(manifest.tools.map((t) => t.name)).toEqual(tools.map((t) => t.name));
   });
