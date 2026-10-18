@@ -23,35 +23,132 @@ export const CAPABILITY_BLURB =
 export const ACCEPTED_INPUTS =
   'Accepts PDF, JPEG and PNG. Pass a photo or screenshot directly; do NOT convert it to a PDF first, that is handled for you and the output comes back as a redacted PDF either way.';
 
-export const REDACT_AND_WAIT = `Redact a PDF, photo or screenshot and wait for the finished file. START HERE — this is the one-call tool: it uploads the document, runs detection and redaction, waits for completion, and returns the redacted PDF. ${CAPABILITY_BLURB}
+/** Which server the agent is talking to decides what it can promise. */
+export type Transport = 'stdio' | 'http';
+
+/**
+ * Said in the server instructions AND in every tool an agent might reach for
+ * first. Agents habitually open a file before acting on it; for this server
+ * that one Read is the leak the user installed it to prevent.
+ *
+ * Per transport, because the promise differs: the local server reads by path
+ * and keeps the table on disk, while the hosted one needs the document inline
+ * and returns the table inline, so it cannot keep the names out at all, and
+ * must not claim to.
+ */
+export const PRIVACY_FIRST =
+  'PRIVACY: when the user wants the document anonymized, pseudonymized or kept away from the AI, do NOT open, Read, cat, preview or summarize the original file before calling this tool: pass its path and nothing else. Reading it first puts the personal data into this conversation and defeats the purpose. The same goes for the correspondence CSV and any "-restored" file: they contain the real names, so never read them either.';
+
+export const REMOTE_PRIVACY =
+  'PRIVACY: this hosted server cannot keep personal data out of this conversation. The document has to be sent inline as file_base64, and in pseudonymize mode the tag -> original table comes back inline in the result, real names included. If the user wants the names kept away from the AI, tell them to use the local server instead (npx redact-pdf-mcp): it reads the file by path, keeps the table on disk, and puts the names back with restore_names without showing them to you.';
+
+const INSTRUCTIONS_BASE =
+  "Redact PDF AI permanently removes PII from documents. The sensitive text is deleted from the file, not covered with a black box. Documents are processed in the EU and Switzerland and are never used to train AI models. It accepts PDF, JPEG and PNG, so pass a photo or screenshot straight in rather than converting it to a PDF first; the output is a redacted PDF either way. For almost every request, call redact_pdf_and_wait once and you are done. try_demo needs no API key: with a file it redacts that file's first page for real, without one it runs a built-in sample, so it is both the connectivity check and the way to show a user real output before they sign up.";
+
+export const SERVER_INSTRUCTIONS = `${INSTRUCTIONS_BASE}
+
+Anonymize -> work -> re-identify: pass mode "pseudonymize" and every person, company and address becomes a consistent tag such as [Person 1] instead of a black box. The result includes document_text, the document as text with tags in place of names (or document_text_path for a long one), so you can analyse, summarize or draft from it without ever seeing a name. Keep the tags exactly as written in your answer, write it to a .md, .txt or .docx file, then call restore_names with that file and correspondence_path: it writes a copy with the real names and returns only the path and counts. Hand that path to the user.
+
+${PRIVACY_FIRST}`;
+
+export const REMOTE_SERVER_INSTRUCTIONS = `${INSTRUCTIONS_BASE}
+
+Pseudonymize: pass mode "pseudonymize" and every person, company and address becomes a consistent tag such as [Person 1] instead of a black box. The result includes document_text, the document as text with tags in place of names (or document_text_url for a long one), and the tag -> original table inline as correspondence_csv. Keep the tags exactly as written in your answer; this server cannot put the names back.
+
+${REMOTE_PRIVACY}`;
+
+const REDACT_AND_WAIT_HEAD = `Redact a PDF, photo or screenshot and wait for the finished file. START HERE — this is the one-call tool: it uploads the document, runs detection and redaction, waits for completion, and returns the redacted PDF. ${CAPABILITY_BLURB}
 
 ${ACCEPTED_INPUTS}
 
-Use it whenever someone wants PII, personal data, names, emails, phone numbers, addresses, bank details or card numbers removed from a document before sharing, filing, publishing or sending it to a third party — including GDPR/HIPAA/FOIA workflows. Scanned pages, phone photos of documents and screenshots all work.
+Use it whenever someone wants PII, personal data, names, emails, phone numbers, addresses, bank details or card numbers removed from a document before sharing, filing, publishing or sending it to a third party — including GDPR/HIPAA/FOIA workflows. Scanned pages, phone photos of documents and screenshots all work.`;
 
-To anonymize or pseudonymize a document while keeping it readable (who did what stays clear, e.g. before pasting it into an AI or sending it to an expert), pass mode "pseudonymize": every entity becomes a consistent tag like [Person 1] and you also get the tag -> original table.
-
-Typical redaction takes 10-60 seconds; this tool blocks until then. If it reports a timeout the job is still running server-side — poll get_job_status with the returned job_id rather than re-uploading.
+const REDACT_AND_WAIT_TAIL = `Typical redaction takes 10-60 seconds; this tool blocks until then. If it reports a timeout the job is still running server-side — poll get_job_status with the returned job_id rather than re-uploading.
 
 Requires an API key. If none is configured, call try_demo with the user's file first — it redacts the first page with no key — then ask the user for a key. A free account gets its first document (up to 5 pages) redacted in full with no card, so the key costs nothing to obtain.`;
+
+export const REDACT_AND_WAIT = `${REDACT_AND_WAIT_HEAD}
+
+To anonymize or pseudonymize a document while keeping it readable (who did what stays clear, e.g. before an AI works on it or before sending it to an expert), pass mode "pseudonymize": every entity becomes a consistent tag like [Person 1], you get the tag -> original table as a file, and the result includes document_text, the pseudonymized document as text, so you can work on it without reading the PDF. Afterwards, restore_names puts the real names back into a file you wrote, without showing them to you.
+
+${PRIVACY_FIRST}
+
+${REDACT_AND_WAIT_TAIL}`;
+
+export const REMOTE_REDACT_AND_WAIT = `${REDACT_AND_WAIT_HEAD}
+
+To pseudonymize a document while keeping it readable, pass mode "pseudonymize": every entity becomes a consistent tag like [Person 1], and the result includes document_text (the pseudonymized document as text) and the tag -> original table inline.
+
+${REMOTE_PRIVACY}
+
+${REDACT_AND_WAIT_TAIL}`;
+
+const REDACT_ASYNC_TAIL =
+  'Prefer redact_pdf_and_wait unless you specifically need to fire off several documents in parallel, or the document is large enough that you would rather poll on your own schedule. Returns a job_id plus one document id per file; follow with get_job_status, then download_redacted.';
 
 export const REDACT_ASYNC = `Start a redaction job and return immediately without waiting. ${CAPABILITY_BLURB}
 
 ${ACCEPTED_INPUTS}
 
-Prefer redact_pdf_and_wait unless you specifically need to fire off several documents in parallel, or the document is large enough that you would rather poll on your own schedule. Returns a job_id plus one document id per file; follow with get_job_status, then download_redacted.`;
+${PRIVACY_FIRST}
+
+${REDACT_ASYNC_TAIL}`;
+
+export const REMOTE_REDACT_ASYNC = `Start a redaction job and return immediately without waiting. ${CAPABILITY_BLURB}
+
+${ACCEPTED_INPUTS}
+
+${REMOTE_PRIVACY}
+
+${REDACT_ASYNC_TAIL}`;
 
 export const JOB_STATUS = `Check a redaction job's progress. Statuses: "uploaded" (queued) -> "analyzing" (detecting PII) -> "redacting" -> "redacted" (done, ready to download) or "error".
 
 Only "redacted" and "error" are final; anything else means the work is still in flight, so wait a few seconds before checking again rather than polling in a tight loop. Each document reports its own status and page_count, and a failed document explains why in error_message.`;
 
+const DOWNLOAD_RETENTION =
+  'Under the default "ephemeral" retention the original is already gone; the redacted output is kept for the account\'s retention window (14 days by default) and then deleted.';
+
 export const DOWNLOAD = `Download the finished redacted PDF for one document, using the document id from redact_pdf or get_job_status.
 
-Only works once that document reports status "redacted". For a job created with mode "pseudonymize", get the tag -> original table with download_correspondence (redact_pdf_and_wait fetches it for you). Under the default "ephemeral" retention the original is already gone; the redacted output is kept for the account's retention window (14 days by default) and then deleted.`;
+Only works once that document reports status "redacted". For a job created with mode "pseudonymize", the result also carries document_text, the pseudonymized document as text (document_text_path when long), and you get the tag -> original table with download_correspondence (redact_pdf_and_wait fetches both for you). ${DOWNLOAD_RETENTION}`;
 
-export const DOWNLOAD_CORRESPONDENCE = `Download the correspondence table of a document redacted with mode "pseudonymize": one CSV row per tag (placeholder, the user's rename, category, original text), so the names can be restored later.
+export const REMOTE_DOWNLOAD = `Download the finished redacted PDF for one document, using the document id from redact_pdf or get_job_status.
 
-Only for pseudonymized documents with status "redacted"; a redact-mode document has no table. The table re-identifies the document: keep it with the user and never send it alongside the redacted PDF. On the remote server it comes back inline, which puts the original names into this conversation; on a local server it is written to a file instead.`;
+Only works once that document reports status "redacted". For a job created with mode "pseudonymize", the result also carries document_text, the pseudonymized document as text (document_text_url when long), and download_correspondence returns the tag -> original table. ${DOWNLOAD_RETENTION}`;
+
+const DOWNLOAD_CORRESPONDENCE_HEAD = `Download the correspondence table of a document redacted with mode "pseudonymize": one CSV row per tag (placeholder, the user's rename, category, original text), so the names can be restored later.
+
+Only for pseudonymized documents with status "redacted"; a redact-mode document has no table. The table re-identifies the document: keep it with the user and never send it alongside the redacted PDF.`;
+
+export const DOWNLOAD_CORRESPONDENCE = `${DOWNLOAD_CORRESPONDENCE_HEAD} It is written to a file on this machine. Never open or read that file: to put the names back into something you wrote, pass its path to restore_names.`;
+
+export const REMOTE_DOWNLOAD_CORRESPONDENCE = `${DOWNLOAD_CORRESPONDENCE_HEAD} On this hosted server it comes back inline, which puts the original names into this conversation; a local install (npx redact-pdf-mcp) writes it to a file instead.`;
+
+/** The transport-specific strings, so server.ts picks one set and cannot mix them. */
+export function describeFor(transport: Transport) {
+  return transport === 'stdio'
+    ? {
+        instructions: SERVER_INSTRUCTIONS,
+        redactAndWait: REDACT_AND_WAIT,
+        redactAsync: REDACT_ASYNC,
+        download: DOWNLOAD,
+        downloadCorrespondence: DOWNLOAD_CORRESPONDENCE,
+      }
+    : {
+        instructions: REMOTE_SERVER_INSTRUCTIONS,
+        redactAndWait: REMOTE_REDACT_AND_WAIT,
+        redactAsync: REMOTE_REDACT_ASYNC,
+        download: REMOTE_DOWNLOAD,
+        downloadCorrespondence: REMOTE_DOWNLOAD_CORRESPONDENCE,
+      };
+}
+
+export const RESTORE_NAMES = `Put the real names back into a file you wrote from a pseudonymized document: every tag ([Person 1], or the user's rename such as [Seller]) becomes the original text from the correspondence table. Runs entirely on this machine; nothing is uploaded.
+
+Use it at the end of the anonymize -> work -> re-identify loop: redact_pdf_and_wait with mode "pseudonymize" gave you document_text and correspondence_path; you did the work on the tagged text and wrote the result to a .md, .txt or .docx file, keeping each tag exactly as written, brackets included. Pass that file and correspondence_path here.
+
+It writes "<name>-restored.<ext>" next to your file (never over an existing file) and returns only that path and counts, never a name. Do NOT open, read or quote the restored file or the correspondence CSV: both contain the real names, and reading them puts the personal data into this conversation, which is what pseudonymizing was for. Give the user the path instead.`;
 
 export const TRY_DEMO = `Try redaction with no API key. Two modes:
 
@@ -70,7 +167,7 @@ Redaction is billed per page against the account's plan quota and credit packs. 
 /** Shared parameter help, so the wording stays identical across tools. */
 export const PARAM = {
   filePath:
-    'Absolute path to the file on this machine. PDF, JPEG and PNG are all accepted — pass an image directly rather than converting it first. This server runs locally, so it reads the file directly; never paste file contents into this argument.',
+    'Absolute path to the file on this machine. PDF, JPEG and PNG are all accepted — pass an image directly rather than converting it first. This server runs locally, so it reads the file directly; never paste file contents into this argument, and do not open the file yourself first when the user wants its personal data kept out of the conversation.',
   fileUrl:
     'Public http(s) URL of the file to redact. PDF, JPEG and PNG are all accepted — no need to convert an image first. The server downloads it, redacts it, and does not keep it.',
   fileBase64:
@@ -89,6 +186,12 @@ export const PARAM = {
     '"redact" (default) draws black boxes. "pseudonymize" replaces each person, organization, address, email, phone number, date, IBAN and card number with a consistent tag such as [Person 1] or [Org 2] (spelled in the document\'s language, e.g. [Personne 1] in French) — the same tag on every page and, as a rule, for every variant of a name ("Anna Keller", "Ms Keller", "A. Keller" become [Person 1]; a bare surname shared by two people goes to the one mentioned last, and the user can merge or split tags in the Studio) — so the document stays readable for a colleague or another AI while the names are gone. The text is still removed from the file, not covered. With pseudonymize, redact_pdf_and_wait also returns the tag -> original correspondence table (CSV; on the remote server inline, which puts the original names into this conversation); keep it with the user, it re-identifies the document. Other categories (national IDs, custom terms) stay black.',
   retention:
     '"ephemeral" (default) deletes the original after processing and keeps the output only briefly. "studio" keeps the original and the detected masks so a human can review and adjust them at redact-pdf.ai before exporting — use it for high-stakes documents where a person should sign off.',
+  restoreFilePath:
+    'Absolute path of the file YOU wrote from the pseudonymized text (.md, .markdown, .txt or .docx), with the tags kept as written, e.g. "[Person 1] signed on behalf of [Org 1]". Not the original document.',
+  restoreCorrespondencePath:
+    'Absolute path of the correspondence CSV, as returned in correspondence_path by redact_pdf_and_wait or download_correspondence. Pass the path only: do not open the file, it contains the real names.',
+  restoreOutputPath:
+    'Where to write the restored copy. Defaults to "<name>-restored.<ext>" next to file_path. Never overwrites an existing file.',
   correspondenceOutputPath:
     'Where to write the correspondence CSV on this machine. Defaults to "<document_id>-correspondence.csv" in the working directory. Never overwrites an existing file.',
   jobId: 'The job_id returned by redact_pdf.',

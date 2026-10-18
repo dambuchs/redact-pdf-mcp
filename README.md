@@ -175,6 +175,7 @@ gets its first document (up to 5 pages) redacted in full, no card. Without a key
 | `download_redacted` | Fetch the redacted output for one document. |
 | `download_correspondence` | Fetch the tag → original table of a pseudonymized document (`mode: "pseudonymize"`). |
 | `try_demo` | Keyless. With a file: redact its first page for real. Without: run the built-in sample. |
+| `restore_names` | **Local only.** Put the real names back into a `.md`, `.txt` or `.docx` the agent wrote from the pseudonymized text. Returns the output path and counts, never a name. |
 | `get_account_status` | Check the API key is valid and see the account, before a big batch. |
 
 Redaction rules, on either redact tool:
@@ -185,7 +186,23 @@ Redaction rules, on either redact tool:
 | `pii_included_terms` | Always redact these, even if not detected as PII (codenames, case numbers). |
 | `pii_excluded_terms` | Never redact these, even if detected (your own company name). |
 | `retention` | `ephemeral` (default) deletes the original after processing. `studio` keeps masks for human review. |
-| `mode` | `redact` (default) draws black boxes. `pseudonymize` draws consistent tags such as `[Person 1]` and returns the correspondence table (stdio: written next to the PDF as `*-correspondence.csv`; remote: inline as `correspondence_csv`). Also accepted by `try_demo`. |
+| `mode` | `redact` (default) draws black boxes. `pseudonymize` draws consistent tags such as `[Person 1]` and returns the correspondence table (stdio: written next to the PDF as `*-correspondence.csv`; remote: inline as `correspondence_csv`) plus the document as text with the tags in place (`document_text`, or `document_text_path` / `document_text_url` past 32 KB). Also accepted by `try_demo`. |
+
+## Anonymize → let the AI work → put the names back
+
+The local server closes the loop without the model ever seeing a name:
+
+1. `redact_pdf_and_wait` with `mode: "pseudonymize"` returns the redacted PDF, the
+   correspondence table on disk, and `document_text`: the document as text, every name
+   replaced by its tag. The agent works from that text.
+2. The agent writes its answer (summary, memo, letter) to a `.md`, `.txt` or `.docx` file,
+   keeping the tags as written.
+3. `restore_names` with that file and the `correspondence_path` writes
+   `<name>-restored.<ext>` with the real names, and returns only the path and counts.
+
+The agent must not open the original document first, nor the correspondence CSV or the
+restored file afterwards: any of those reads puts the personal data back into the
+conversation. The server instructions and tool descriptions say so explicitly.
 
 ## Remote server
 

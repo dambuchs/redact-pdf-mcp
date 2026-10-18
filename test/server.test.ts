@@ -78,7 +78,18 @@ describe('tool listing', () => {
     expect(tools[0]?.name).toBe('redact_pdf_and_wait');
   });
 
-  it('exposes exactly the seven documented tools', async () => {
+  it('declares the same tools in manifest.json as the local server registers', async () => {
+    // The desktop-extension manifest is hand-kept; two releases each appended
+    // restore_names and the bundle shipped it twice.
+    const manifest = JSON.parse(
+      await readFile(new URL('../manifest.json', import.meta.url), 'utf8'),
+    ) as { tools: { name: string }[] };
+    const { client } = await connect('stdio', fetchMock() as unknown as typeof fetch);
+    const { tools } = await client.listTools();
+    expect(manifest.tools.map((t) => t.name)).toEqual(tools.map((t) => t.name));
+  });
+
+  it('exposes exactly the eight documented tools locally', async () => {
     const { client } = await connect('stdio', fetchMock() as unknown as typeof fetch);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name)).toEqual([
@@ -88,8 +99,16 @@ describe('tool listing', () => {
       'download_redacted',
       'download_correspondence',
       'try_demo',
+      'restore_names',
       'get_account_status',
     ]);
+  });
+
+  it('never offers restore_names on the hosted server, which would need the names uploaded', async () => {
+    const { client } = await connect('http', fetchMock() as unknown as typeof fetch);
+    const { tools } = await client.listTools();
+    expect(tools.map((t) => t.name)).not.toContain('restore_names');
+    expect(tools).toHaveLength(7);
   });
 
   it('offers file_path only in stdio mode, where the server can actually read disk', async () => {

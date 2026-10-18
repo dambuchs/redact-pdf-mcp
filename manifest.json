@@ -2,9 +2,9 @@
   "manifest_version": "0.2",
   "name": "redact-pdf-mcp",
   "display_name": "Redact PDF AI",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Redact or anonymize PDFs and scans: black boxes or consistent [Person 1] tags. EU/Swiss-hosted, never used to train AI models.",
-  "long_description": "An MCP server that permanently redacts PII from PDFs, photos and screenshots. The sensitive text is deleted from the file rather than covered with a black rectangle, so it cannot be recovered by copy-paste, text extraction, or \"remove object\" in a PDF editor.\n\nMost MCP \"redaction\" servers scrub PII out of prompt text. This one takes a real document and returns a real redacted document.\n\nIt also anonymizes documents while keeping them readable: in pseudonymize mode every person, company and address becomes a consistent tag such as [Person 1], identical on every page, and the tag -> original table comes back so the names can be restored. Useful before pasting a contract or case file into an AI.\n\nIncludes a keyless try_demo tool, so an agent can verify the server works before any API key is configured. Handles scanned documents via OCR across 100+ languages and detects 8 entity types. Documents are processed on Microsoft Azure in the EU and Switzerland, encrypted in transit and at rest, never used to train AI models, and the original is deleted after processing. The server itself is stateless and sends no telemetry.",
+  "long_description": "An MCP server that permanently redacts PII from PDFs, photos and screenshots. The sensitive text is deleted from the file rather than covered with a black rectangle, so it cannot be recovered by copy-paste, text extraction, or \"remove object\" in a PDF editor.\n\nMost MCP \"redaction\" servers scrub PII out of prompt text. This one takes a real document and returns a real redacted document.\n\nIt also anonymizes documents while keeping them readable: in pseudonymize mode every person, company and address becomes a consistent tag such as [Person 1], identical on every page, and the tag -> original table comes back so the names can be restored. Useful before pasting a contract or case file into an AI.\n\nAnonymize -> AI works -> re-identify: in pseudonymize mode the result also includes document_text, the document as text with every name already replaced by its tag (inline up to 32 KB, otherwise saved as a .md file next to the PDF), so the agent analyses, summarizes or drafts from it without ever seeing a name. The local restore_names tool then writes a copy of the agent's .md, .txt or .docx output with the real names put back from the correspondence table, on this machine, returning only the file path and counts. The names never reach the model.\n\nIncludes a keyless try_demo tool, so an agent can verify the server works before any API key is configured. Handles scanned documents via OCR across 100+ languages and detects 8 entity types. Documents are processed on Microsoft Azure in the EU and Switzerland, encrypted in transit and at rest, never used to train AI models, and the original is deleted after processing. The server itself is stateless and sends no telemetry.",
   "author": {
     "name": "Redact PDF AI",
     "email": "info@redact-pdf.ai",
@@ -53,7 +53,7 @@
   "tools": [
     {
       "name": "redact_pdf_and_wait",
-      "description": "Redact a PDF, photo or screenshot and return the redacted PDF in one call. The sensitive text is removed from the file, not covered."
+      "description": "Redact a PDF, photo or screenshot and return the redacted PDF in one call. The sensitive text is removed from the file, not covered. In pseudonymize mode it also returns the document as tagged text to work from."
     },
     {
       "name": "redact_pdf",
@@ -74,6 +74,10 @@
     {
       "name": "try_demo",
       "description": "No API key needed: redact the first page of your own file, or run a built-in sample."
+    },
+    {
+      "name": "restore_names",
+      "description": "Put the real names back into a .md, .txt or .docx file written from a pseudonymized document. Runs locally; returns only the path and counts, never a name."
     },
     {
       "name": "get_account_status",

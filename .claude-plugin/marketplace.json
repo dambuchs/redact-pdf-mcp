@@ -1,0 +1,12 @@
+{
+  "name": "redact-pdf-ai",
+  "owner": { "name": "Redact PDF AI", "email": "info@redact-pdf.ai" },
+  "metadata": { "description": "Redact PDF AI plugins for Claude Code and Cowork." },
+  "plugins": [
+    {
+      "name": "redact-pdf-ai",
+      "source": "./plugin",
+      "description": "Redact or anonymize PDFs, scans and screenshots on your machine before an AI or anyone else sees them."
+    }
+  ]
+}

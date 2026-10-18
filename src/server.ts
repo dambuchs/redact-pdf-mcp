@@ -1,5 +1,6 @@
 /**
- * The MCP server: six tools over the Redact PDF AI `/v1` API.
+ * The MCP server: tools over the Redact PDF AI `/v1` API, plus one local-only
+ * tool (restore_names) that never talks to it.
  *
  * Tool registration order is deliberate. Clients present tools to the model in
  * the order the server lists them, and agents reliably reach for the first
@@ -8,27 +9,26 @@
  */
 
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path';
-import { link, unlink, writeFile } from 'node:fs/promises';
+import { link, readFile, unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { METADATA_TIMEOUT_MS, RedactPdfClient, withoutEmptyRules } from './client.js';
-import {
-  ACCOUNT_STATUS,
-  DOWNLOAD,
-  DOWNLOAD_CORRESPONDENCE,
-  JOB_STATUS,
-  PARAM,
-  REDACT_ASYNC,
-  REDACT_AND_WAIT,
-  TRY_DEMO,
-} from './descriptions.js';
+import { ACCOUNT_STATUS, describeFor, JOB_STATUS, PARAM, RESTORE_NAMES, TRY_DEMO } from './descriptions.js';
 import { RedactPdfError, SIGN_UP_URL } from './errors.js';
 import { logToolCall } from './observability.js';
 import { fileFromBase64, fileFromPath, fileFromUrl } from './inputs.js';
 import { isTerminal, pollUntilTerminal, type PollOptions } from './poll.js';
+import {
+  parseCorrespondenceCsv,
+  RESTORABLE_EXTENSIONS,
+  restoreDocx,
+  restoredPath,
+  restoreText,
+  type RestoreCounts,
+} from './restore.js';
 import {
   DEMO_MAX_BYTES,
   MAX_IMAGE_BYTES,
@@ -49,6 +49,12 @@ export interface CreateServerOptions {
   client: RedactPdfClient;
   /** Ceiling for inline base64 in remote responses; larger outputs return a URL. */
   maxInlineBytes?: number;
+  /**
+   * Ceiling for the pseudonymized text returned inline. Larger texts go to a
+   * file next to the PDF (stdio) or a URL (remote): a 300-page contract inline
+   * would fill the agent's context before it could do any work.
+   */
+  maxInlineTextBytes?: number;
   /**
    * Fetcher used to download `file_url` inputs in remote mode. Deliberately
    * separate from the API client's fetch: this one must never carry the
@@ -86,6 +92,7 @@ function readVersion(): string {
   }
 }
 const DEFAULT_MAX_INLINE_BYTES = 6 * 1024 * 1024;
+export const DEFAULT_MAX_INLINE_TEXT_BYTES = 32 * 1024;
 const MAX_TIMEOUT_SECONDS = 900;
 
 /**
@@ -186,6 +193,81 @@ function correspondenceFailure(client: RedactPdfClient, documentId: string, erro
   const later = settled ? '' : ` Get it later with the download_correspondence tool (document_id "${documentId}").`;
   return `The redacted PDF is ready, but the correspondence table could not be saved: ${message}${later} Do not redact again.`;
 }
+
+/** The text version next to the PDF: `x-redacted.pdf` -> `x-redacted.md`. */
+export function documentTextPath(outputPath: string): string {
+  const ext = extname(outputPath);
+  return join(dirname(outputPath), `${basename(outputPath, ext)}.md`);
+}
+
+const textBytes = (text: string) => new TextEncoder().encode(text).byteLength;
+
+/**
+ * The pseudonymized document as text, best effort like the table: the PDF is
+ * done and billed, so a failure is reported next to it, never as an error.
+ *
+ * `missingIsQuiet`: download_redacted does not know the document's mode, and
+ * a redact-mode document has no text (404). There, absence is not news.
+ */
+async function documentText(
+  client: RedactPdfClient,
+  documentId: string,
+  target: { stdioPath: string } | { baseUrl: string },
+  maxInlineTextBytes: number,
+  missingIsQuiet: boolean,
+): Promise<Record<string, unknown>> {
+  let text: string;
+  try {
+    text = await client.downloadOutputText(documentId);
+  } catch (error) {
+    if (missingIsQuiet && error instanceof RedactPdfError && error.code === 'not_found') return {};
+    const message = error instanceof RedactPdfError ? error.toAgentMessage() : error instanceof Error ? error.message : String(error);
+    return { document_text_error: `The redacted PDF is ready, but its text version could not be fetched: ${message} Do not redact again.` };
+  }
+  const bytes = textBytes(text);
+  if (bytes <= maxInlineTextBytes) return { document_text: text };
+  if ('stdioPath' in target) {
+    try {
+      await writeOutput(target.stdioPath, new TextEncoder().encode(text));
+    } catch (error) {
+      const message = error instanceof RedactPdfError ? error.toAgentMessage() : String(error);
+      return { document_text_error: `The redacted PDF is ready, but its text version could not be saved: ${message} Do not redact again.` };
+    }
+    return {
+      document_text_path: target.stdioPath,
+      document_text_bytes: bytes,
+      document_text_note: `The text version is ${(bytes / 1024).toFixed(0)} KB, too large to return inline; it was written to document_text_path. Read it from there (it contains tags, not names).`,
+    };
+  }
+  return {
+    document_text_url: `${target.baseUrl}/v1/documents/${encodeURIComponent(documentId)}/output.md`,
+    document_text_bytes: bytes,
+    document_text_note: `The text version is ${(bytes / 1024).toFixed(0)} KB, too large to return inline. Fetch document_text_url with the header "X-API-Key: <your key>".`,
+  };
+}
+
+const WORK_FROM_TEXT =
+  'Work from document_text (or the file at document_text_path): it is the document as the PDF shows it, every name replaced by its tag. Do not OCR or read the PDF instead, and do not open the original file.';
+
+const KEEP_TAGS = 'Keep each tag exactly as written, brackets included, wherever your answer refers to that entity.';
+const NEVER_OPEN =
+  'Never open the correspondence table or the restored file yourself: both contain the real names, and reading them puts the names into this conversation.';
+
+const RESTORE_NEXT_STEP = `${WORK_FROM_TEXT} ${KEEP_TAGS} To hand the user a version with the real names, write your result to a .md, .txt or .docx file and call restore_names with that file and correspondence_path. ${NEVER_OPEN}`;
+
+/** download_redacted has no correspondence_path: the table is one more call away. */
+const DOWNLOAD_NEXT_STEP = `${WORK_FROM_TEXT} ${KEEP_TAGS} To hand the user a version with the real names, save the table with download_correspondence (same document_id; it returns output_path), write your result to a .md, .txt or .docx file, and call restore_names with that file and the table's path. ${NEVER_OPEN}`;
+
+/**
+ * A next step only when there is text to work from. After a failed fetch,
+ * "work from document_text" points at a field that is not there, and "do not
+ * read the PDF" leaves the agent no way forward at all.
+ */
+function hasDocumentText(fields: Record<string, unknown>): boolean {
+  return 'document_text' in fields || 'document_text_path' in fields || 'document_text_url' in fields;
+}
+
+const REMOTE_NEXT_STEP = `Work from document_text (or fetch document_text_url): it is the document as the PDF shows it, every name replaced by its tag. Do not OCR the PDF instead. ${KEEP_TAGS} This hosted server cannot put the names back; the user can, with the correspondence table, or with restore_names on a local install (npx redact-pdf-mcp).`;
 
 /** Source arguments differ by transport — see the note in inputs.ts. */
 const stdioSourceShape = {
@@ -426,7 +508,7 @@ function alreadyExistsError(outputPath: string): RedactPdfError {
 
 function writeFailure(outputPath: string, cause: unknown): RedactPdfError {
   return new RedactPdfError(
-    `Could not write the redacted PDF to "${outputPath}": ${cause instanceof Error ? cause.message : String(cause)}. Pass an absolute output_path inside a directory this process can write to.`,
+    `Could not write "${outputPath}": ${cause instanceof Error ? cause.message : String(cause)}. Pass an absolute output_path inside a directory this process can write to.`,
     { code: 'invalid_request' },
   );
 }
@@ -536,16 +618,15 @@ function summariseJob(job: Job) {
 export function createServer(options: CreateServerOptions): McpServer {
   const { mode, client } = options;
   const maxInlineBytes = options.maxInlineBytes ?? DEFAULT_MAX_INLINE_BYTES;
+  const maxInlineTextBytes = options.maxInlineTextBytes ?? DEFAULT_MAX_INLINE_TEXT_BYTES;
   const downloadFetch = options.fetchImpl ?? globalThis.fetch;
   const resolveHost = options.resolveHost;
   const pollOptions = options.pollOptions ?? {};
+  const wording = describeFor(mode);
 
   const server = new McpServer(
     { name: 'redact-pdf', version: VERSION },
-    {
-      instructions:
-        'Redact PDF AI permanently removes PII from documents. The sensitive text is deleted from the file, not covered with a black box. Documents are processed in the EU and Switzerland and are never used to train AI models. It accepts PDF, JPEG and PNG, so pass a photo or screenshot straight in rather than converting it to a PDF first; the output is a redacted PDF either way. It also anonymizes: pass mode "pseudonymize" and every person, company and address becomes a consistent tag such as [Person 1] instead of a black box, so the document stays readable (for example before pasting a contract into an AI or sending it to an expert), and you get the tag -> original table to restore the names. For almost every request, call redact_pdf_and_wait once and you are done. try_demo needs no API key: with a file it redacts that file\'s first page for real, without one it runs a built-in sample, so it is both the connectivity check and the way to show a user real output before they sign up.',
-    },
+    { instructions: wording.instructions },
   );
 
   // Typed as ZodRawShape so the stdio/http branches unify instead of widening
@@ -566,7 +647,7 @@ export function createServer(options: CreateServerOptions): McpServer {
     'redact_pdf_and_wait',
     {
       title: 'Redact a PDF (upload, wait, return the redacted file)',
-      description: REDACT_AND_WAIT,
+      description: wording.redactAndWait,
       inputSchema: {
         ...sourceShape,
         ...destinationShape,
@@ -648,6 +729,9 @@ export function createServer(options: CreateServerOptions): McpServer {
           const correspondence = pseudonymized
             ? await writeCorrespondence(client, document.id, correspondencePath(outputPath))
             : {};
+          const text = pseudonymized
+            ? await documentText(client, document.id, { stdioPath: documentTextPath(outputPath) }, maxInlineTextBytes, false)
+            : {};
           return jsonResult({
             status: 'redacted',
             mode: pseudonymized ? 'pseudonymize' : 'redact',
@@ -659,10 +743,15 @@ export function createServer(options: CreateServerOptions): McpServer {
             note: pseudonymized
               ? `${PSEUDONYMIZED_NOTE} The original file was not modified.`
               : 'The PII text was removed from the file, not covered — it cannot be recovered from the output. The original file was not modified.',
+            ...text,
+            ...(hasDocumentText(text) ? { next_step: RESTORE_NEXT_STEP } : {}),
           });
         }
 
         const correspondence = pseudonymized ? await fetchCorrespondence(client, document.id) : null;
+        const text = pseudonymized
+          ? await documentText(client, document.id, { baseUrl: client.baseUrl }, maxInlineTextBytes, false)
+          : {};
         return jsonResult({
           status: 'redacted',
           mode: pseudonymized ? 'pseudonymize' : 'redact',
@@ -675,6 +764,8 @@ export function createServer(options: CreateServerOptions): McpServer {
             : 'csv' in correspondence
               ? { correspondence_csv: correspondence.csv, note: PSEUDONYMIZED_NOTE }
               : { correspondence_error: correspondence.error }),
+          ...text,
+          ...(hasDocumentText(text) ? { next_step: REMOTE_NEXT_STEP } : {}),
         });
       });
     }),
@@ -685,7 +776,7 @@ export function createServer(options: CreateServerOptions): McpServer {
     'redact_pdf',
     {
       title: 'Start a redaction job (does not wait)',
-      description: REDACT_ASYNC,
+      description: wording.redactAsync,
       inputSchema: { ...sourceShape, ...ruleShape },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     },
@@ -727,7 +818,7 @@ export function createServer(options: CreateServerOptions): McpServer {
     'download_redacted',
     {
       title: 'Download a redacted PDF',
-      description: DOWNLOAD,
+      description: wording.download,
       inputSchema: {
         document_id: z.string().min(1).describe(PARAM.documentId),
         ...destinationShape,
@@ -747,17 +838,25 @@ export function createServer(options: CreateServerOptions): McpServer {
           ? resolveOutputPath(args.output_path)
           : resolve(process.cwd(), `${args.document_id}-redacted.pdf`);
         await writeOutput(outputPath, bytes);
+        const text = await documentText(
+          client, args.document_id, { stdioPath: documentTextPath(outputPath) }, maxInlineTextBytes, true,
+        );
         return jsonResult({
           status: 'downloaded',
           output_path: outputPath,
           bytes: bytes.byteLength,
+          ...text,
+          ...(hasDocumentText(text) ? { next_step: DOWNLOAD_NEXT_STEP } : {}),
         });
       }
 
+      const text = await documentText(client, args.document_id, { baseUrl: client.baseUrl }, maxInlineTextBytes, true);
       return jsonResult({
         status: 'downloaded',
         bytes: bytes.byteLength,
         ...downloadPayload(client.baseUrl, args.document_id, bytes, maxInlineBytes),
+        ...text,
+        ...(hasDocumentText(text) ? { next_step: REMOTE_NEXT_STEP } : {}),
       });
     }),
   );
@@ -769,7 +868,7 @@ export function createServer(options: CreateServerOptions): McpServer {
     'download_correspondence',
     {
       title: 'Download the tag -> original table of a pseudonymized document',
-      description: DOWNLOAD_CORRESPONDENCE,
+      description: wording.downloadCorrespondence,
       inputSchema: {
         document_id: z.string().min(1).describe(PARAM.documentId),
         ...(mode === 'stdio'
@@ -863,6 +962,29 @@ export function createServer(options: CreateServerOptions): McpServer {
     }),
   );
 
+  // ---- 5b. Put the names back (local only). ---------------------------------
+  // Never registered on the hosted server: it would need the table uploaded,
+  // i.e. the names sent over the wire to a tool whose result the model reads.
+  if (mode === 'stdio') {
+    server.registerTool(
+      'restore_names',
+      {
+        title: 'Put the real names back into a file written from a pseudonymized document',
+        description: RESTORE_NAMES,
+        inputSchema: {
+          file_path: z.string().min(1).describe(PARAM.restoreFilePath),
+          correspondence_path: z.string().min(1).describe(PARAM.restoreCorrespondencePath),
+          output_path: z.string().optional().describe(PARAM.restoreOutputPath),
+        },
+        // Writes a new file, never over an existing one, and calls no network.
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+      },
+      guard('restore_names', async (args: { file_path: string; correspondence_path: string; output_path?: string }) =>
+        jsonResult(await restoreNames(args)),
+      ),
+    );
+  }
+
   // ---- 6. Account / quota preflight. ---------------------------------------
   server.registerTool(
     'get_account_status',
@@ -911,4 +1033,84 @@ function downloadPayload(
     download_url: url,
     download_note: `The file is ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MB — too large to inline. Fetch download_url with the header "X-API-Key: <your key>".`,
   };
+}
+
+/**
+ * restore_names, kept apart from the tool wiring so the privacy rule is easy
+ * to audit: the result is built from paths and counts only. Original values
+ * exist in `table` and in the bytes written to disk, nowhere else.
+ */
+export async function restoreNames(args: {
+  file_path: string;
+  correspondence_path: string;
+  output_path?: string;
+}): Promise<Record<string, unknown>> {
+  const inputPath = resolveOutputPath(args.file_path);
+  const tablePath = resolveOutputPath(args.correspondence_path);
+  const ext = extname(inputPath).toLowerCase();
+  if (!(RESTORABLE_EXTENSIONS as readonly string[]).includes(ext)) {
+    throw new RedactPdfError(
+      `restore_names works on ${RESTORABLE_EXTENSIONS.join(', ')} files; "${basename(inputPath)}" is not one. Write the answer as Markdown or plain text and call it again.`,
+      { code: 'invalid_request' },
+    );
+  }
+  const outputPath = args.output_path ? resolveOutputPath(args.output_path) : restoredPath(inputPath);
+  if (outputPath === inputPath || outputPath === tablePath) {
+    throw new RedactPdfError('output_path must be a new file, not the input file or the correspondence table.', {
+      code: 'invalid_request',
+    });
+  }
+
+  const table = parseCorrespondenceCsv(await readLocal(tablePath, 'correspondence table'));
+  if (table.length === 0) {
+    throw new RedactPdfError('The correspondence table has no rows: there is nothing to restore.', { code: 'invalid_request' });
+  }
+  const input = new Uint8Array(await readLocalBytes(inputPath, 'file'));
+
+  let restored: Uint8Array;
+  let counts: RestoreCounts;
+  if (ext === '.docx') {
+    ({ bytes: restored, counts } = restoreDocx(input, table));
+  } else {
+    const result = restoreText(new TextDecoder().decode(input), table);
+    restored = new TextEncoder().encode(result.text);
+    counts = result.counts;
+  }
+  await writeOutput(outputPath, restored);
+
+  return {
+    status: 'restored',
+    output_path: outputPath,
+    replacements: counts.replacements,
+    tags_restored: counts.tags_restored,
+    ...(counts.unresolved_tags.length ? { unresolved_tags: counts.unresolved_tags } : {}),
+    ...(counts.ambiguous_tags.length
+      ? {
+          ambiguous_tags: counts.ambiguous_tags,
+          ambiguous_note:
+            'These tags stand for more than one person in the table (the same rename was given to different entities in the Studio), so they were left as tags rather than guessed. Ask the user to fill them in, or to give each entity its own rename and download the table again.',
+        }
+      : {}),
+    note:
+      counts.replacements === 0
+        ? 'No tag of the table was found in the file, so the output is an unchanged copy. Tags must be written exactly as in the pseudonymized text, brackets included, e.g. [Person 1].'
+        : 'The restored file contains the real names. Give the user output_path; do NOT open, read or quote it, which would put the names into this conversation.',
+  };
+}
+
+/** Errors name the path, never the content: the table is personal data. */
+async function readLocalBytes(path: string, what: string): Promise<Buffer> {
+  try {
+    return await readFile(path);
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException)?.code;
+    throw new RedactPdfError(
+      `Could not read the ${what} "${path}"${code ? ` (${code})` : ''}. Pass an absolute path to an existing file.`,
+      { code: 'invalid_request' },
+    );
+  }
+}
+
+async function readLocal(path: string, what: string): Promise<string> {
+  return new TextDecoder().decode(await readLocalBytes(path, what));
 }

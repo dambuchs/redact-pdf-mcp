@@ -337,6 +337,31 @@ export class RedactPdfClient {
   }
 
   /**
+   * `GET /v1/documents/{id}/output.md` — the pseudonymized document as
+   * Markdown, tags included: what the PDF shows, which has no text layer to
+   * read back. A redact-mode document has none (404).
+   */
+  async downloadOutputText(documentId: string): Promise<string> {
+    let response: Response;
+    try {
+      response = await this.request(
+        `/v1/documents/${encodeURIComponent(documentId)}/output.md`,
+        { method: 'GET', timeoutMs: METADATA_TIMEOUT_MS },
+      );
+    } catch (error) {
+      throw outputTextError(error);
+    }
+    try {
+      return await response.text();
+    } catch (cause) {
+      throw new RedactPdfError(
+        `Could not read the text version: ${cause instanceof Error ? cause.message : String(cause)}.`,
+        { code: 'network_error', retryable: true },
+      );
+    }
+  }
+
+  /**
    * Create a job, picking the upload path that fits the files.
    *
    * Mixed batches (images + a large PDF) go through multipart as a whole: the
@@ -549,6 +574,28 @@ function correspondenceError(error: unknown): unknown {
       return new RedactPdfError(
         'Some tags have no stored original name: the document was analysed in redact mode and switched to pseudonymize afterwards. Ask the user to run the detection again in Pseudonymize mode in the Studio. Retrying this call will not help.',
         { ...opts, code: 'invalid_request' },
+      );
+    default:
+      return error;
+  }
+}
+
+/** The text route: 404 and 409 are settled states, so retrying never helps. */
+function outputTextError(error: unknown): unknown {
+  if (!(error instanceof RedactPdfError)) {
+    return error;
+  }
+  const opts = { status: error.status, requestId: error.requestId, retryable: false };
+  switch (error.status) {
+    case 404:
+      return new RedactPdfError(
+        'No text version for this document. Either it was not redacted with mode "pseudonymize", or this output has none (produced before text versions existed, re-rendered after a Studio edit, or its text could not be built). The redacted PDF is unaffected.',
+        { ...opts, code: 'not_found' },
+      );
+    case 409:
+      return new RedactPdfError(
+        'The text version no longer matches the redacted PDF: the document was edited in the Redact PDF AI Studio after it was produced. The PDF is current; retrying will not refresh the text.',
+        { ...opts, code: 'conflict' },
       );
     default:
       return error;
