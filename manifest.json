@@ -2,9 +2,9 @@
   "manifest_version": "0.2",
   "name": "redact-pdf-mcp",
   "display_name": "Redact PDF AI",
-  "version": "0.3.0",
-  "description": "Permanently redact PII from PDFs and scans. EU/Swiss-hosted, never used to train AI models.",
-  "long_description": "An MCP server that permanently redacts PII from PDFs, photos and screenshots. The sensitive text is deleted from the file rather than covered with a black rectangle, so it cannot be recovered by copy-paste, text extraction, or \"remove object\" in a PDF editor.\n\nMost MCP \"redaction\" servers scrub PII out of prompt text. This one takes a real document and returns a real redacted document.\n\nIncludes a keyless try_demo tool, so an agent can verify the server works before any API key is configured. Handles scanned documents via OCR across 100+ languages and detects 8 entity types. Documents are processed on Microsoft Azure in the EU and Switzerland, encrypted in transit and at rest, never used to train AI models, and the original is deleted after processing. The server itself is stateless and sends no telemetry.",
+  "version": "0.3.1",
+  "description": "Redact or anonymize PDFs and scans: black boxes or consistent [Person 1] tags. EU/Swiss-hosted, never used to train AI models.",
+  "long_description": "An MCP server that permanently redacts PII from PDFs, photos and screenshots. The sensitive text is deleted from the file rather than covered with a black rectangle, so it cannot be recovered by copy-paste, text extraction, or \"remove object\" in a PDF editor.\n\nMost MCP \"redaction\" servers scrub PII out of prompt text. This one takes a real document and returns a real redacted document.\n\nIt also anonymizes documents while keeping them readable: in pseudonymize mode every person, company and address becomes a consistent tag such as [Person 1], identical on every page, and the tag -> original table comes back so the names can be restored. Useful before pasting a contract or case file into an AI.\n\nIncludes a keyless try_demo tool, so an agent can verify the server works before any API key is configured. Handles scanned documents via OCR across 100+ languages and detects 8 entity types. Documents are processed on Microsoft Azure in the EU and Switzerland, encrypted in transit and at rest, never used to train AI models, and the original is deleted after processing. The server itself is stateless and sends no telemetry.",
   "author": {
     "name": "Redact PDF AI",
     "email": "info@redact-pdf.ai",
@@ -26,7 +26,9 @@
     "documents",
     "anonymization",
     "de-identification",
-    "mcp"
+    "mcp",
+    "pseudonymization",
+    "anonymize"
   ],
   "privacy_policies": [
     "https://www.redact-pdf.ai/privacy"

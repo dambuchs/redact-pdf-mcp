@@ -7,6 +7,11 @@ that anyone can select, copy, or delete.
 Most "redaction" MCP servers scrub PII out of prompt text. This one takes a real document
 and returns a real redacted document.
 
+**It also anonymizes.** With `mode: "pseudonymize"` every person, company and address becomes a
+consistent tag such as `[Person 1]` instead of a black box, so the document stays readable
+(e.g. before pasting a contract into ChatGPT or Claude), and you get the tag → original table to
+restore the names.
+
 [![npm](https://img.shields.io/npm/v/redact-pdf-mcp?color=cb3837&logo=npm)](https://www.npmjs.com/package/redact-pdf-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/redact-pdf-mcp?color=cb3837)](https://www.npmjs.com/package/redact-pdf-mcp)
 [![No AI training](https://img.shields.io/badge/your%20documents-never%20used%20for%20AI%20training-2ea44f)](https://www.redact-pdf.ai/security)
@@ -20,7 +25,8 @@ and returns a real redacted document.
 claude mcp add redact-pdf -- npx -y redact-pdf-mcp
 ```
 
-Then ask: *"Redact the personal data in ~/Documents/contract.pdf"*.
+Then ask: *"Redact the personal data in ~/Documents/contract.pdf"*, or *"Anonymize
+~/Documents/contract.pdf with placeholders so I can paste it into an AI"*.
 
 ---
 
