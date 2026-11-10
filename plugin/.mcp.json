@@ -2,7 +2,7 @@
   "mcpServers": {
     "redact-pdf": {
       "command": "npx",
-      "args": ["-y", "redact-pdf-mcp@0.4.1"]
+      "args": ["-y", "redact-pdf-mcp@0.4.2"]
     }
   }
 }

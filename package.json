@@ -1,6 +1,6 @@
 {
   "name": "redact-pdf-mcp",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Redact or anonymize PDFs, scans and screenshots through your AI agent: black boxes, or consistent [Person 1] tags that keep the document readable. Text removed, not covered. EU & Swiss hosted, never used for AI training.",
   "mcpName": "io.github.dambuchs/redact-pdf-mcp",
   "keywords": [
@@ -41,7 +41,7 @@
   "author": "Redact PDF AI",
   "type": "module",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "bin": {
     "redact-pdf-mcp": "dist/stdio.js",
@@ -70,7 +70,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {
