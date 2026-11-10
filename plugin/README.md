@@ -7,7 +7,7 @@ Redact or anonymize PDFs, scans, photos and screenshots on your own machine, bef
 
 ## What's in the plugin
 
-- The **Redact PDF AI MCP server** ([`redact-pdf-mcp`](https://www.npmjs.com/package/redact-pdf-mcp), pinned to 0.4.2, MIT licensed, source at [github.com/dambuchs/redact-pdf-mcp](https://github.com/dambuchs/redact-pdf-mcp)). It runs locally through `npx`. Tools: `redact_pdf_and_wait`, `redact_pdf`, `get_job_status`, `download_redacted`, `download_correspondence`, `try_demo`, `restore_names`, `get_account_status`, `set_api_key`.
+- The **Redact PDF AI MCP server** ([`redact-pdf-mcp`](https://www.npmjs.com/package/redact-pdf-mcp), pinned to 0.4.3, MIT licensed, source at [github.com/dambuchs/redact-pdf-mcp](https://github.com/dambuchs/redact-pdf-mcp)). It runs locally through `npx`. Tools: `redact_pdf_and_wait`, `redact_pdf`, `get_job_status`, `download_redacted`, `download_correspondence`, `try_demo`, `restore_names`, `get_account_status`, `set_api_key`.
 - The **anonymize-before-ai** skill: pseudonymize a document without opening it, work on the tagged text, then restore the names locally with `restore_names`.
 - The **redact-before-sharing** skill: black out personal data before a document is sent, filed or published.
 
@@ -57,7 +57,7 @@ The key never appears on screen or in your shell history. Delete the file to rem
 ## What it sends, and where
 
 - **To the Redact PDF AI API (`https://www.redact-pdf.ai`)**: the document you ask it to process, your redaction options and your API key. Documents are processed on Microsoft Azure in the EU and Switzerland, encrypted in transit and at rest, and never used to train AI models.
-- **To npm**: `npx` downloads `redact-pdf-mcp@0.4.2` and its dependencies from the public npm registry the first time it runs.
+- **To npm**: `npx` downloads `redact-pdf-mcp@0.4.3` and its dependencies from the public npm registry the first time it runs.
 - **Kept on your machine**: the API key, if you confirm saving it with `set_api_key` (see above). The redacted PDF, the correspondence table that maps tags to real names, and the restored file. `restore_names` runs entirely locally and uploads nothing.
 - The plugin and the MCP server collect no telemetry.
 

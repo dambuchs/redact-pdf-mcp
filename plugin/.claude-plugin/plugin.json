@@ -1,7 +1,7 @@
 {
   "name": "redact-pdf-ai",
   "displayName": "Redact PDF AI",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Redact or anonymize PDFs, scans and screenshots on your machine before an AI or anyone else sees them. Black boxes, or consistent [Person 1] tags that keep the document readable, with the real names put back locally afterwards.",
   "author": { "name": "Redact PDF AI", "email": "info@redact-pdf.ai", "url": "https://www.redact-pdf.ai" },
   "homepage": "https://www.redact-pdf.ai/developers",

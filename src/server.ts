@@ -111,6 +111,23 @@ function readVersion(): string {
 const DEFAULT_MAX_INLINE_BYTES = 6 * 1024 * 1024;
 export const DEFAULT_MAX_INLINE_TEXT_BYTES = 32 * 1024;
 const MAX_TIMEOUT_SECONDS = 900;
+/**
+ * Caps on the custom-term lists, so an oversized argument is refused at the
+ * schema instead of being validated element by element and shipped to the API
+ * (zod GHSA-mrhx-c7xc-m3w5 was memory exhaustion on exactly that). Far above
+ * any real list: these are codenames and names, not a document.
+ */
+const MAX_TERMS = 500;
+const MAX_TERM_LENGTH = 500;
+
+/**
+ * Every tool's input schema. zod 3 listed `additionalProperties: false` on
+ * these and clients may rely on it; zod 4 drops it for a stripping object, so
+ * restate it. Runtime is unchanged: unknown keys are still stripped, not refused.
+ */
+function toolInput<S extends z.ZodRawShape>(shape: S) {
+  return z.object(shape).meta({ additionalProperties: false });
+}
 
 /**
  * What-to-redact arguments, shared by the redact tools AND the keyless demo.
@@ -119,9 +136,9 @@ const MAX_TIMEOUT_SECONDS = 900;
  * came back as a successful "no personal data found".
  */
 const piiRuleShape = {
-  pii_categories: z.array(z.enum(PII_CATEGORIES)).min(1).optional().describe(PARAM.piiCategories),
-  pii_included_terms: z.array(z.string()).optional().describe(PARAM.includedTerms),
-  pii_excluded_terms: z.array(z.string()).optional().describe(PARAM.excludedTerms),
+  pii_categories: z.array(z.enum(PII_CATEGORIES)).min(1).max(PII_CATEGORIES.length).optional().describe(PARAM.piiCategories),
+  pii_included_terms: z.array(z.string().max(MAX_TERM_LENGTH)).max(MAX_TERMS).optional().describe(PARAM.includedTerms),
+  pii_excluded_terms: z.array(z.string().max(MAX_TERM_LENGTH)).max(MAX_TERMS).optional().describe(PARAM.excludedTerms),
   mode: z.enum(REDACTION_MODES).optional().describe(PARAM.mode),
 };
 
@@ -673,6 +690,10 @@ export function createServer(options: CreateServerOptions): McpServer {
     mode === 'stdio'
       ? { output_path: z.string().optional().describe(PARAM.outputPath) }
       : {};
+  const correspondenceDestinationShape: z.ZodRawShape =
+    mode === 'stdio'
+      ? { output_path: z.string().optional().describe(PARAM.correspondenceOutputPath) }
+      : {};
 
   // ---- 1. The one-call tool. Listed first on purpose. -----------------------
   server.registerTool(
@@ -680,12 +701,12 @@ export function createServer(options: CreateServerOptions): McpServer {
     {
       title: 'Redact a PDF (upload, wait, return the redacted file)',
       description: wording.redactAndWait,
-      inputSchema: {
+      inputSchema: toolInput({
         ...sourceShape,
         ...destinationShape,
         ...ruleShape,
         timeout_seconds: z.number().int().min(10).max(MAX_TIMEOUT_SECONDS).optional().describe(PARAM.timeout),
-      },
+      }),
       // Writes a redacted PDF to disk in stdio mode; declare that honestly.
       annotations: {
         readOnlyHint: false,
@@ -809,7 +830,7 @@ export function createServer(options: CreateServerOptions): McpServer {
     {
       title: 'Start a redaction job (does not wait)',
       description: wording.redactAsync,
-      inputSchema: { ...sourceShape, ...ruleShape },
+      inputSchema: toolInput({ ...sourceShape, ...ruleShape }),
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     },
     tool('redact_pdf', async (args: SourceArgs & RuleArgs) => {
@@ -829,7 +850,7 @@ export function createServer(options: CreateServerOptions): McpServer {
     {
       title: 'Check redaction job status',
       description: JOB_STATUS,
-      inputSchema: { job_id: z.string().min(1).describe(PARAM.jobId) },
+      inputSchema: toolInput({ job_id: z.string().min(1).describe(PARAM.jobId) }),
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     tool('get_job_status', async (args: { job_id: string }) => {
@@ -851,10 +872,10 @@ export function createServer(options: CreateServerOptions): McpServer {
     {
       title: 'Download a redacted PDF',
       description: wording.download,
-      inputSchema: {
+      inputSchema: toolInput({
         document_id: z.string().min(1).describe(PARAM.documentId),
         ...destinationShape,
-      },
+      }),
       // In stdio mode this writes a file to a model-chosen path. Declaring it
       // read-only would let clients auto-approve it without prompting.
       annotations:
@@ -901,12 +922,10 @@ export function createServer(options: CreateServerOptions): McpServer {
     {
       title: 'Download the tag -> original table of a pseudonymized document',
       description: wording.downloadCorrespondence,
-      inputSchema: {
+      inputSchema: toolInput({
         document_id: z.string().min(1).describe(PARAM.documentId),
-        ...(mode === 'stdio'
-          ? { output_path: z.string().optional().describe(PARAM.correspondenceOutputPath) }
-          : {}),
-      },
+        ...correspondenceDestinationShape,
+      }),
       annotations:
         mode === 'stdio'
           ? { readOnlyHint: false, destructiveHint: true, openWorldHint: true }
@@ -944,7 +963,7 @@ export function createServer(options: CreateServerOptions): McpServer {
     {
       title: 'Try redaction with no API key (first page of a real file, or a sample)',
       description: TRY_DEMO,
-      inputSchema: { ...demoSourceShape, ...piiRuleShape },
+      inputSchema: toolInput({ ...demoSourceShape, ...piiRuleShape }),
       // With a file it uploads user data and creates a server-side demo record.
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     },
@@ -1003,11 +1022,11 @@ export function createServer(options: CreateServerOptions): McpServer {
       {
         title: 'Put the real names back into a file written from a pseudonymized document',
         description: RESTORE_NAMES,
-        inputSchema: {
+        inputSchema: toolInput({
           file_path: z.string().min(1).describe(PARAM.restoreFilePath),
           correspondence_path: z.string().min(1).describe(PARAM.restoreCorrespondencePath),
           output_path: z.string().optional().describe(PARAM.restoreOutputPath),
-        },
+        }),
         // Writes a new file, never over an existing one, and calls no network.
         annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
       },
@@ -1049,7 +1068,7 @@ export function createServer(options: CreateServerOptions): McpServer {
       {
         title: 'Use the API key the user gave (saved on this machine once they confirm)',
         description: SET_API_KEY,
-        inputSchema: { api_key: z.string().describe(PARAM.apiKey) },
+        inputSchema: toolInput({ api_key: z.string().describe(PARAM.apiKey) }),
         // Can replace the saved key (only with the user's confirmation), and
         // what a repeat does depends on the user's answer.
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },

@@ -262,4 +262,65 @@ describe('rules from tool arguments', () => {
     expect(text).toMatch(/900/);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['pii_included_terms', Array.from({ length: 501 }, (_, i) => `term-${i}`)],
+    ['pii_excluded_terms', Array.from({ length: 501 }, (_, i) => `term-${i}`)],
+    ['pii_included_terms', ['x'.repeat(501)]],
+    ['pii_excluded_terms', ['x'.repeat(501)]],
+    ['pii_categories', Array.from({ length: 9 }, () => 'Person')],
+  ])('refuses an oversized %s before anything is fetched', async (key, value) => {
+    const fetchImpl = fetchMock();
+    const mcp = await connect(fetchImpl as unknown as typeof fetch);
+    const result = await mcp.callTool({
+      name: 'redact_pdf',
+      arguments: { file_url: 'https://example.com/a.pdf', [key]: value },
+    });
+    expect(result.isError).toBe(true);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('accepts term lists right at the limit', async () => {
+    const fetchImpl = fetchMock()
+      .mockResolvedValueOnce(new Response(Buffer.from('%PDF-1.4'), { status: 200 }))
+      .mockResolvedValueOnce(jobResponse());
+    const terms = Array.from({ length: 500 }, (_, i) => `${i}`.padEnd(500, 'x'));
+
+    const mcp = await connect(fetchImpl as unknown as typeof fetch);
+    const result = await mcp.callTool({
+      name: 'redact_pdf',
+      arguments: { file_url: 'https://example.com/a.pdf', pii_included_terms: terms },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const form = await sentForm(callAt(fetchImpl, 1)[1]);
+    expect(JSON.parse(form.get('pii_included_terms') as string)).toHaveLength(500);
+  });
+
+  it('strips an argument the schema does not name instead of refusing the call', async () => {
+    const fetchImpl = fetchMock()
+      .mockResolvedValueOnce(new Response(Buffer.from('%PDF-1.4'), { status: 200 }))
+      .mockResolvedValueOnce(jobResponse());
+
+    const mcp = await connect(fetchImpl as unknown as typeof fetch);
+    const result = await mcp.callTool({
+      name: 'redact_pdf',
+      arguments: { file_url: 'https://example.com/a.pdf', not_a_real_arg: 'x' },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const form = await sentForm(callAt(fetchImpl, 1)[1]);
+    expect(form.get('not_a_real_arg')).toBeNull();
+  });
+
+  it('lists additionalProperties: false on every tool that takes arguments', async () => {
+    // zod 3 emitted it; zod 4 only does because toolInput() restates it.
+    const mcp = await connect(fetchMock() as unknown as typeof fetch);
+    const { tools } = await mcp.listTools();
+    const withArgs = tools.filter((t) => Object.keys(t.inputSchema.properties ?? {}).length > 0);
+    expect(withArgs.length).toBeGreaterThan(0);
+    for (const t of withArgs) {
+      expect(t.inputSchema, t.name).toMatchObject({ additionalProperties: false });
+    }
+  });
 });
