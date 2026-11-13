@@ -18,10 +18,11 @@ It works in Claude Code, and in Cowork sessions that run on your computer, becau
 In Claude Code:
 
 ```
-/plugin install redact-pdf-ai --marketplace dambuchs/redact-pdf-mcp
+/plugin marketplace add dambuchs/redact-pdf-mcp
+/plugin install redact-pdf-ai@redact-pdf-ai
 ```
 
-In Cowork, add it from **Customize → Plugins**. It runs in Cowork sessions on your computer.
+In Cowork, download [redact-pdf-ai-plugin.zip](https://www.redact-pdf.ai/downloads/redact-pdf-ai-plugin.zip), then go to **Customize → Plugins → Add → Upload plugin**. It runs in Cowork sessions on your computer.
 
 ## Use it
 
